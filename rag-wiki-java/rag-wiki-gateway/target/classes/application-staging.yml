@@ -1,0 +1,165 @@
+# 预发环境配置文件
+
+# ==================== 应用配置 ====================
+server:
+  port: 8080
+  servlet:
+    context-path: /
+
+spring:
+  profiles:
+    active: staging
+  
+  # 数据源配置
+  datasource:
+    url: jdbc:mysql://mysql:3306/rag_wiki?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai
+    username: rag_wiki
+    password: RagWiki@2026
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      minimum-idle: 10
+      maximum-pool-size: 50
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      connection-timeout: 30000
+  
+  # Redis配置
+  redis:
+    host: redis
+    port: 6379
+    password: RagWiki@2026
+    database: 0
+    lettuce:
+      pool:
+        max-active: 20
+        max-idle: 10
+        min-idle: 5
+        max-wait: 3000ms
+
+# ==================== Nacos配置 ====================
+spring.cloud:
+  nacos:
+    server-addr: nacos:8848
+    username: nacos
+    password: nacos
+    config:
+      file-extension: yml
+      namespace: staging
+    discovery:
+      namespace: staging
+      group: DEFAULT_GROUP
+
+# ==================== MyBatis-Plus配置 ====================
+mybatis-plus:
+  mapper-locations: classpath*:mapper/**/*.xml
+  type-aliases-package: com.zhiwiki.**.entity
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
+  global-config:
+    db-config:
+      id-type: ASSIGN_ID
+      logic-delete-field: isDeleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+# ==================== Feign配置 ====================
+feign:
+  client:
+    config:
+      default:
+        connectTimeout: 5000
+        readTimeout: 10000
+        loggerLevel: BASIC
+  compression:
+    request:
+      enabled: true
+    response:
+      enabled: true
+
+# ==================== Python AI服务配置 ====================
+ai:
+  service:
+    url: http://rag-wiki-python:8000
+    connect-timeout: 5000
+    read-timeout: 30000
+
+# ==================== MinIO配置 ====================
+minio:
+  endpoint: http://minio:9000
+  accessKey: minioadmin
+  secretKey: minioadmin
+  bucketName: rag-wiki-documents
+
+# ==================== 日志配置 ====================
+logging:
+  level:
+    root: INFO
+    com.zhiwiki: DEBUG
+    org.springframework.cloud: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{50} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{50} - %msg%n"
+  file:
+    name: /app/logs/rag-wiki.log
+    max-size: 100MB
+    max-history: 30
+
+# ==================== Actuator监控配置 ====================
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+
+# ==================== 安全配置 ====================
+security:
+  jwt:
+    secret: rag-wiki-jwt-secret-key-2026-staging-environment
+    expiration: 86400000  # 24小时
+  permission:
+    cache-enabled: true
+    cache-ttl: 300  # 5分钟
+
+# ==================== 向量检索配置 ====================
+vector:
+  search:
+    # 租户隔离级别: METADATA_FILTER / PARTITION / COLLECTION
+    isolation-level: METADATA_FILTER
+    enable-dept-filter: true
+    enable-role-filter: true
+    enable-space-filter: true
+    enable-doc-filter: false  # 行级权限（性能消耗大）
+  retrieval:
+    top-k: 10
+    score-threshold: 0.7
+    enable-rerank: true
+
+# ==================== LLM配置 ====================
+llm:
+  default-model: qwen-turbo
+  temperature: 0.7
+  max-tokens: 2000
+  timeout: 30000
+
+# ==================== 缓存配置 ====================
+cache:
+  type: redis
+  redis:
+    time-to-live: 600000  # 10分钟
+    key-prefix: "rag-wiki:"
+
+# ==================== 异步配置 ====================
+async:
+  executor:
+    core-pool-size: 10
+    max-pool-size: 50
+    queue-capacity: 1000
+    thread-name-prefix: async-

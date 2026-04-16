@@ -1,0 +1,53 @@
+# ============================================================
+# Vault 密钥管理配置
+# ============================================================
+# 
+# 使用方式：
+# 1. 部署 HashiCorp Vault
+# 2. 在 application-prod.yml 中启用 vault 配置
+# 3. 将敏感配置迁移到 Vault
+#
+# Vault 存储的密钥列表：
+# - secret/rag-wiki/mysql: password
+# - secret/rag-wiki/redis: password
+# - secret/rag-wiki/elasticsearch: username, password
+# - secret/rag-wiki/encryption: key (AES-256密钥)
+# - secret/rag-wiki/oauth2/wecom: corp-id, secret
+# - secret/rag-wiki/oauth2/dingtalk: app-key, app-secret
+# - secret/rag-wiki/oauth2/generic: client-id, client-secret
+# - secret/rag-wiki/minio: access-key, secret-key
+# - secret/rag-wiki/jwt: secret
+
+# ==================== Spring Vault 集成 ====================
+
+# 启用Vault（生产环境启用）
+spring.cloud.vault:
+  enabled: false  # 开发环境关闭，生产环境改为true
+  uri: https://vault:8200
+  token: ${VAULT_TOKEN:}
+  scheme: https
+  connection-timeout: 5000
+  read-timeout: 15000
+  
+  # KV Secrets Engine v2
+  kv:
+    enabled: true
+    backend: secret
+    default-context: rag-wiki
+    application-name: rag-wiki
+
+  # 认证方式（推荐Kubernetes Service Account）
+  authentication: TOKEN
+  # Kubernetes认证（部署到K8s时切换）
+  # authentication: KUBERNETES
+  # kubernetes:
+  #   role: rag-wiki
+  #   service-account-token-file: /var/run/secrets/kubernetes.io/serviceaccount/token
+
+# ==================== 密钥轮换策略 ====================
+# 自动轮换周期（天）
+rag-wiki:
+  vault:
+    key-rotation-days: 90
+    auto-rotate: false  # 生产环境建议开启
+    notification-days-before-expiry: 7

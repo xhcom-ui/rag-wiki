@@ -1,0 +1,238 @@
+# ============================================================
+# GitLab CI/CD 流水线配置
+# ============================================================
+# 
+# 包含阶段：代码检查 → 构建 → 测试 → 打包 → 部署
+# 支持 GitLab CI 和 ArgoCD
+
+stages:
+  - lint
+  - build
+  - test
+  - package
+  - deploy
+
+variables:
+  MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository"
+  DOCKER_REGISTRY: "registry.example.com"
+  IMAGE_PREFIX: "rag-wiki"
+
+# ==================== 代码检查 ====================
+lint-java:
+  stage: lint
+  image: maven:3.9-eclipse-temurin-17
+  script:
+    - cd rag-wiki-java
+    - mvn checkstyle:check -B
+    - mvn spotbugs:check -B
+  only:
+    - merge_requests
+    - main
+
+lint-python:
+  stage: lint
+  image: python:3.11
+  script:
+    - cd rag-wiki-python
+    - pip install ruff mypy
+    - ruff check app/
+    - mypy app/ --ignore-missing-imports
+  only:
+    - merge_requests
+    - main
+
+lint-frontend:
+  stage: lint
+  image: node:18
+  script:
+    - cd rag-wiki-frontend
+    - npm ci
+    - npm run lint
+    - npm run type-check
+  only:
+    - merge_requests
+    - main
+
+# ==================== 构建 ====================
+build-java:
+  stage: build
+  image: maven:3.9-eclipse-temurin-17
+  cache:
+    paths:
+      - rag-wiki-java/.m2/repository
+  script:
+    - cd rag-wiki-java
+    - mvn package -DskipTests -B
+  artifacts:
+    paths:
+      - rag-wiki-java/*/target/*.jar
+    expire_in: 1 day
+  only:
+    - main
+    - tags
+
+build-frontend:
+  stage: build
+  image: node:18
+  script:
+    - cd rag-wiki-frontend
+    - npm ci
+    - npm run build
+  artifacts:
+    paths:
+      - rag-wiki-frontend/dist/
+    expire_in: 1 day
+  only:
+    - main
+    - tags
+
+# ==================== 测试 ====================
+test-java:
+  stage: test
+  image: maven:3.9-eclipse-temurin-17
+  services:
+    - mysql:8.0
+    - redis:7
+  variables:
+    MYSQL_ROOT_PASSWORD: test
+    MYSQL_DATABASE: rag_wiki_test
+    SPRING_DATASOURCE_URL: jdbc:mysql://mysql/rag_wiki_test
+    SPRING_REDIS_HOST: redis
+  script:
+    - cd rag-wiki-java
+    - mvn test -B
+  coverage: '/Total.*?([0-9]{1,3})%/'
+  only:
+    - merge_requests
+    - main
+
+test-python:
+  stage: test
+  image: python:3.11
+  script:
+    - cd rag-wiki-python
+    - pip install -r requirements.txt
+    - pip install pytest pytest-cov
+    - pytest --cov=app tests/ --cov-report=term
+  only:
+    - merge_requests
+    - main
+
+# ==================== Docker打包 ====================
+package-auth:
+  stage: package
+  image: docker:24
+  services:
+    - docker:24-dind
+  script:
+    - docker build -t $DOCKER_REGISTRY/$IMAGE_PREFIX/rag-wiki-auth:$CI_COMMIT_SHA -f rag-wiki-java/rag-wiki-auth/Dockerfile rag-wiki-java
+    - docker push $DOCKER_REGISTRY/$IMAGE_PREFIX/rag-wiki-auth:$CI_COMMIT_SHA
+  only:
+    - main
+    - tags
+
+package-document:
+  stage: package
+  image: docker:24
+  services:
+    - docker:24-dind
+  script:
+    - docker build -t $DOCKER_REGISTRY/$IMAGE_PREFIX/rag-wiki-document:$CI_COMMIT_SHA -f rag-wiki-java/rag-wiki-document/Dockerfile rag-wiki-java
+    - docker push $DOCKER_REGISTRY/$IMAGE_PREFIX/rag-wiki-document:$CI_COMMIT_SHA
+  only:
+    - main
+    - tags
+
+package-python:
+  stage: package
+  image: docker:24
+  services:
+    - docker:24-dind
+  script:
+    - docker build -t $DOCKER_REGISTRY/$IMAGE_PREFIX/rag-wiki-python:$CI_COMMIT_SHA -f rag-wiki-python/Dockerfile rag-wiki-python
+    - docker push $DOCKER_REGISTRY/$IMAGE_PREFIX/rag-wiki-python:$CI_COMMIT_SHA
+  only:
+    - main
+    - tags
+
+package-approval:
+  stage: package
+  image: docker:24
+  services:
+    - docker:24-dind
+  script:
+    - docker build --build-arg SERVICE=rag-wiki-approval -t $DOCKER_REGISTRY/$IMAGE_PREFIX/rag-wiki-approval:$CI_COMMIT_SHA -f rag-wiki-java/Dockerfile rag-wiki-java
+    - docker push $DOCKER_REGISTRY/$IMAGE_PREFIX/rag-wiki-approval:$CI_COMMIT_SHA
+  only:
+    - main
+    - tags
+
+package-audit:
+  stage: package
+  image: docker:24
+  services:
+    - docker:24-dind
+  script:
+    - docker build --build-arg SERVICE=rag-wiki-audit -t $DOCKER_REGISTRY/$IMAGE_PREFIX/rag-wiki-audit:$CI_COMMIT_SHA -f rag-wiki-java/Dockerfile rag-wiki-java
+    - docker push $DOCKER_REGISTRY/$IMAGE_PREFIX/rag-wiki-audit:$CI_COMMIT_SHA
+  only:
+    - main
+    - tags
+
+package-ai:
+  stage: package
+  image: docker:24
+  services:
+    - docker:24-dind
+  script:
+    - docker build --build-arg SERVICE=rag-wiki-ai -t $DOCKER_REGISTRY/$IMAGE_PREFIX/rag-wiki-ai:$CI_COMMIT_SHA -f rag-wiki-java/Dockerfile rag-wiki-java
+    - docker push $DOCKER_REGISTRY/$IMAGE_PREFIX/rag-wiki-ai:$CI_COMMIT_SHA
+  only:
+    - main
+    - tags
+
+package-frontend:
+  stage: package
+  image: docker:24
+  services:
+    - docker:24-dind
+  script:
+    - docker build -t $DOCKER_REGISTRY/$IMAGE_PREFIX/rag-wiki-frontend:$CI_COMMIT_SHA -f rag-wiki-frontend/Dockerfile rag-wiki-frontend
+    - docker push $DOCKER_REGISTRY/$IMAGE_PREFIX/rag-wiki-frontend:$CI_COMMIT_SHA
+  only:
+    - main
+    - tags
+
+# ==================== 部署 ====================
+deploy-staging:
+  stage: deploy
+  image: bitnami/kubectl
+  script:
+    - kubectl config use-context staging
+    - kubectl set image deployment/rag-wiki-auth auth=$DOCKER_REGISTRY/$IMAGE_PREFIX/rag-wiki-auth:$CI_COMMIT_SHA
+    - kubectl set image deployment/rag-wiki-document document=$DOCKER_REGISTRY/$IMAGE_PREFIX/rag-wiki-document:$CI_COMMIT_SHA
+    - kubectl set image deployment/rag-wiki-approval approval=$DOCKER_REGISTRY/$IMAGE_PREFIX/rag-wiki-approval:$CI_COMMIT_SHA
+    - kubectl set image deployment/rag-wiki-audit audit=$DOCKER_REGISTRY/$IMAGE_PREFIX/rag-wiki-audit:$CI_COMMIT_SHA
+    - kubectl set image deployment/rag-wiki-ai ai=$DOCKER_REGISTRY/$IMAGE_PREFIX/rag-wiki-ai:$CI_COMMIT_SHA
+    - kubectl set image deployment/rag-wiki-python python=$DOCKER_REGISTRY/$IMAGE_PREFIX/rag-wiki-python:$CI_COMMIT_SHA
+    - kubectl set image deployment/rag-wiki-frontend frontend=$DOCKER_REGISTRY/$IMAGE_PREFIX/rag-wiki-frontend:$CI_COMMIT_SHA
+    - kubectl rollout status deployment/rag-wiki-auth -n rag-wiki
+  environment:
+    name: staging
+    url: https://staging.rag-wiki.example.com
+  only:
+    - main
+
+deploy-production:
+  stage: deploy
+  image: argoproj/argocd:v2.8.0
+  script:
+    - argocd login argocd.example.com --auth-token $ARGOCD_TOKEN
+    - argocd app sync rag-wiki-production
+    - argocd app wait rag-wiki-production --health
+  environment:
+    name: production
+    url: https://rag-wiki.example.com
+  when: manual
+  only:
+    - tags

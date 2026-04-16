@@ -1,0 +1,93 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: rag-wiki-gateway
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+        namespace: ${NACOS_NAMESPACE:dev}
+    gateway:
+      discovery:
+        locator:
+          enabled: true
+          lower-case-service-id: true
+      routes:
+        # 认证权限服务（含系统配置）
+        - id: rag-wiki-auth
+          uri: lb://rag-wiki-auth
+          predicates:
+            - Path=/api/auth/**,/api/user/**,/api/role/**,/api/dept/**,/api/tenant/**,/api/config/**
+          filters:
+            - StripPrefix=0
+
+        # AI记忆服务（必须在document路由之前，更具体的路径优先匹配）
+        - id: rag-wiki-ai
+          uri: lb://rag-wiki-ai
+          predicates:
+            - Path=/api/ai/memory/**
+          filters:
+            - StripPrefix=0
+
+        # 审计运营服务（含安全告警、LLM配置，必须在document路由之前）
+        - id: rag-wiki-audit
+          uri: lb://rag-wiki-audit
+          predicates:
+            - Path=/api/audit/**,/api/badcase/**,/api/statistics/**,/api/security/**,/api/ai/llm-config/**
+          filters:
+            - StripPrefix=0
+
+        # 文档管理服务（包含AI能力代理，最通用的ai路径放最后）
+        - id: rag-wiki-document
+          uri: lb://rag-wiki-document
+          predicates:
+            - Path=/api/document/**,/api/space/**,/api/file/**,/api/ai/**,/api/vector/**
+          filters:
+            - StripPrefix=0
+
+        # 审批流程服务
+        - id: rag-wiki-approval
+          uri: lb://rag-wiki-approval
+          predicates:
+            - Path=/api/approval/**
+          filters:
+            - StripPrefix=0
+
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowed-origins:
+              - ${CORS_ORIGIN:http://localhost:5173}
+              - ${CORS_ORIGIN_PROD:https://wiki.zhiwiki.com}
+            allowed-methods:
+              - GET
+              - POST
+              - PUT
+              - DELETE
+              - OPTIONS
+            allowed-headers: "*"
+            allow-credentials: true
+            max-age: 3600
+
+# Sa-Token配置
+sa-token:
+  token-name: Authorization
+  timeout: 86400
+  active-timeout: 1800
+  is-concurrent: true
+  is-share: true
+  token-style: uuid
+  is-log: false
+
+# Sentinel配置
+spring.cloud.sentinel:
+  transport:
+    dashboard: ${SENTINEL_DASHBOARD:localhost:8858}
+  eager: true
+
+logging:
+  level:
+    com.zhiwiki: debug
+    org.springframework.cloud.gateway: info

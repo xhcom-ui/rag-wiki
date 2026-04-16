@@ -1,0 +1,106 @@
+# ==================== 生产环境配置 ====================
+
+spring:
+  datasource:
+    hikari:
+      minimum-idle: 10
+      maximum-pool-size: 50
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      connection-timeout: 30000
+      leak-detection-threshold: 60000
+  redis:
+    lettuce:
+      pool:
+        max-active: 30
+        max-idle: 15
+        min-idle: 5
+        max-wait: 3000ms
+
+# Resilience4j 生产配置
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        failure-rate-threshold: 50
+        slow-call-rate-threshold: 80
+        slow-call-duration-threshold: 3s
+        wait-duration-in-open-state: 30s
+        sliding-window-size: 20
+        minimum-number-of-calls: 10
+        permitted-number-of-calls-in-half-open-state: 5
+    instances:
+      pythonAiService:
+        failure-rate-threshold: 60
+        slow-call-duration-threshold: 10s
+        wait-duration-in-open-state: 60s
+      databaseService:
+        failure-rate-threshold: 30
+        slow-call-duration-threshold: 2s
+  retry:
+    configs:
+      default:
+        max-attempts: 3
+        wait-duration: 500ms
+  bulkhead:
+    configs:
+      default:
+        max-concurrent-calls: 20
+        max-wait-duration: 5s
+
+# Sa-Token 生产配置
+sa-token:
+  timeout: 86400
+  active-timeout: 7200
+  is-concurrent: false
+  is-share: false
+  token-style: uuid
+  is-log: false
+
+# 日志配置
+logging:
+  level:
+    root: INFO
+    com.zhiwiki: INFO
+  logback:
+    rollingpolicy:
+      max-file-size: 100MB
+      max-history: 30
+      total-size-cap: 3GB
+
+# Elasticsearch 生产配置
+spring:
+  elasticsearch:
+    uris: http://elasticsearch:9200
+    username: ${ES_USERNAME:}
+    password: ${ES_PASSWORD:}
+    connection-timeout: 5s
+    socket-timeout: 30s
+
+# RAG-Wiki ES开关（生产环境默认开启）
+rag-wiki:
+  elasticsearch:
+    enabled: true
+  # 数据加密配置（生产环境建议开启）
+  encryption:
+    enabled: ${ENCRYPTION_ENABLED:false}
+    key: ${ENCRYPTION_KEY:}
+
+# OAuth2 配置
+oauth2:
+  wecom:
+    corp-id: ${WECOM_CORP_ID:}
+    agent-id: ${WECOM_AGENT_ID:}
+    secret: ${WECOM_SECRET:}
+    redirect-uri: ${WECOM_REDIRECT_URI:}
+  dingtalk:
+    app-key: ${DINGTALK_APP_KEY:}
+    app-secret: ${DINGTALK_APP_SECRET:}
+    redirect-uri: ${DINGTALK_REDIRECT_URI:}
+  generic:
+    client-id: ${OAUTH2_CLIENT_ID:}
+    client-secret: ${OAUTH2_CLIENT_SECRET:}
+    auth-url: ${OAUTH2_AUTH_URL:}
+    token-url: ${OAUTH2_TOKEN_URL:}
+    user-info-url: ${OAUTH2_USER_INFO_URL:}
+    redirect-uri: ${OAUTH2_REDIRECT_URI:}

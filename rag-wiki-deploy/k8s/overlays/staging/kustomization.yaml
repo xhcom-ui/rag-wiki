@@ -1,0 +1,84 @@
+# Staging Overlay - 预发环境
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: rag-wiki-staging
+
+bases:
+  - ../../base
+
+images:
+  - name: rag-wiki/gateway
+    newTag: latest
+  - name: rag-wiki/auth
+    newTag: latest
+  - name: rag-wiki/document
+    newTag: latest
+  - name: rag-wiki/approval
+    newTag: latest
+  - name: rag-wiki/audit
+    newTag: latest
+  - name: rag-wiki/ai
+    newTag: latest
+  - name: rag-wiki/python-ai
+    newTag: latest
+  - name: rag-wiki/frontend
+    newTag: latest
+
+patchesStrategicMerge:
+  - |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: rag-wiki-gateway
+    spec:
+      replicas: 1
+  - |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: rag-wiki-auth
+    spec:
+      replicas: 1
+  - |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: rag-wiki-document
+    spec:
+      replicas: 1
+  - |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: rag-wiki-approval
+    spec:
+      replicas: 1
+  - |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: rag-wiki-audit
+    spec:
+      replicas: 1
+  - |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: rag-wiki-ai
+    spec:
+      replicas: 1
+  - |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: rag-wiki-python
+    spec:
+      replicas: 1
+  - |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: rag-wiki-frontend
+    spec:
+      replicas: 1

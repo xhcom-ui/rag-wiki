@@ -1,0 +1,151 @@
+# Prometheus告警规则 - Rag-Wiki
+groups:
+  # ==================== 服务可用性告警 ====================
+  - name: service_availability
+    rules:
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "服务不可用: {{ $labels.job }}"
+          description: "服务 {{ $labels.job }} 已停止响应超过1分钟"
+
+      - alert: HighErrorRate
+        expr: rate(http_server_requests_seconds_count{status=~"5.."}[5m]) / rate(http_server_requests_seconds_count[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "高错误率: {{ $labels.service }}"
+          description: "服务 {{ $labels.service }} 的5xx错误率超过5%"
+
+      - alert: PodRestartTooFrequent
+        expr: increase(kube_pod_container_status_restarts_total[1h]) > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pod重启频繁: {{ $labels.pod }}"
+          description: "Pod {{ $labels.pod }} 在1小时内重启超过3次"
+
+  # ==================== 性能告警 ====================
+  - name: performance
+    rules:
+      - alert: HighResponseTime
+        expr: histogram_quantile(0.95, rate(http_server_requests_seconds_bucket[5m])) > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "高响应时间: {{ $labels.service }}"
+          description: "服务 {{ $labels.service }} 的P95响应时间超过3秒"
+
+      - alert: HighMemoryUsage
+        expr: container_memory_working_set_bytes / container_spec_memory_limit_bytes > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "高内存使用: {{ $labels.pod }}"
+          description: "Pod {{ $labels.pod }} 内存使用率超过85%"
+
+      - alert: HighCPUUsage
+        expr: rate(container_cpu_usage_seconds_total[5m]) / container_spec_cpu_quota * container_spec_cpu_period > 0.8
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "高CPU使用: {{ $labels.pod }}"
+          description: "Pod {{ $labels.pod }} CPU使用率超过80%持续10分钟"
+
+      - alert: SlowDatabaseQuery
+        expr: histogram_quantile(0.99, rate(mysql_query_duration_seconds_bucket[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "慢数据库查询"
+          description: "MySQL P99查询时间超过5秒"
+
+  # ==================== AI服务告警 ====================
+  - name: ai_service
+    rules:
+      - alert: LLMCallFailure
+        expr: increase(rag_wiki_llm_call_errors_total[5m]) > 5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "LLM调用频繁失败"
+          description: "5分钟内LLM调用失败超过5次"
+
+      - alert: HighEmbeddingLatency
+        expr: histogram_quantile(0.95, rate(rag_wiki_embedding_duration_seconds_bucket[5m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Embedding延迟过高"
+          description: "向量化P95延迟超过10秒"
+
+      - alert: RAGNoResults
+        expr: increase(rag_wiki_rag_no_results_total[1h]) > 20
+        for: 5m
+        labels:
+          severity: info
+        annotations:
+          summary: "RAG检索无结果频繁"
+          description: "1小时内RAG检索无结果超过20次，可能需要优化知识库"
+
+  # ==================== 安全告警 ====================
+  - name: security
+    rules:
+      - alert: FrequentAuthFailures
+        expr: increase(rag_wiki_auth_failure_total[5m]) > 20
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "频繁登录失败"
+          description: "5分钟内登录失败超过20次，可能存在暴力破解"
+
+      - alert: PermissionViolation
+        expr: increase(rag_wiki_permission_violation_total[10m]) > 10
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "权限违规频繁"
+          description: "10分钟内权限违规超过10次"
+
+  # ==================== 资源告警 ====================
+  - name: resources
+    rules:
+      - alert: DiskSpaceLow
+        expr: node_filesystem_avail_bytes / node_filesystem_size_bytes < 0.15
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "磁盘空间不足"
+          description: "磁盘剩余空间不足15%"
+
+      - alert: RedisMemoryHigh
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis内存使用过高"
+          description: "Redis内存使用率超过85%"
+
+      - alert: MySQLConnectionPoolExhausted
+        expr: mysql_connections_active / mysql_connections_max > 0.9
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "MySQL连接池即将耗尽"
+          description: "MySQL活跃连接数占最大连接数比例超过90%"

@@ -1,0 +1,205 @@
+# ConfigMap - 应用配置
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rag-wiki-config
+  namespace: rag-wiki
+data:
+  nacos.server-addr: "nacos-headless:8848"
+  mysql.host: "mysql:3306"
+  redis.host: "redis-master"
+  minio.endpoint: "http://minio:9000"
+  python-ai.url: "http://rag-wiki-python:8000"
+  elasticsearch.host: "elasticsearch:9200"
+  milvus.host: "milvus:19530"
+
+---
+# Secret - 敏感配置（生产环境应使用Vault或Sealed Secrets）
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rag-wiki-secrets
+  namespace: rag-wiki
+type: Opaque
+stringData:
+  MYSQL_PASSWORD: "CHANGE_ME_IN_PRODUCTION"
+  REDIS_PASSWORD: "CHANGE_ME_IN_PRODUCTION"
+  MINIO_ACCESS_KEY: "CHANGE_ME_IN_PRODUCTION"
+  MINIO_SECRET_KEY: "CHANGE_ME_IN_PRODUCTION"
+  JWT_SECRET: "CHANGE_ME_IN_PRODUCTION"
+  LLM_API_KEY: "CHANGE_ME_IN_PRODUCTION"
+  ELASTICSEARCH_PASSWORD: "CHANGE_ME_IN_PRODUCTION"
+
+---
+# Ingress - 入口配置
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rag-wiki-ingress
+  namespace: rag-wiki
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      more_set_headers "X-Frame-Options: DENY";
+      more_set_headers "X-Content-Type-Options: nosniff";
+      more_set_headers "X-XSS-Protection: 1; mode=block";
+      more_set_headers "Referrer-Policy: strict-origin-when-cross-origin";
+spec:
+  tls:
+    - hosts:
+        - wiki.example.com
+      secretName: rag-wiki-tls
+  rules:
+    - host: wiki.example.com
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: rag-wiki-gateway
+                port:
+                  number: 8080
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: rag-wiki-frontend
+                port:
+                  number: 80
+
+---
+# HPA - 自动扩缩容
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: rag-wiki-gateway-hpa
+  namespace: rag-wiki
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: rag-wiki-gateway
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: rag-wiki-python-hpa
+  namespace: rag-wiki
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: rag-wiki-python
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 75
+
+---
+# PodDisruptionBudget - 保障服务可用性
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: rag-wiki-gateway-pdb
+  namespace: rag-wiki
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: rag-wiki-gateway
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: rag-wiki-python-pdb
+  namespace: rag-wiki
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: rag-wiki-python
+
+---
+# NetworkPolicy - 网络隔离策略
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rag-wiki-network-policy
+  namespace: rag-wiki
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: rag-wiki
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: rag-wiki
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: 8080
+        - protocol: TCP
+          port: 8081
+        - protocol: TCP
+          port: 8082
+        - protocol: TCP
+          port: 8000
+  egress:
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: TCP
+          port: 3306  # MySQL
+        - protocol: TCP
+          port: 6379  # Redis
+        - protocol: TCP
+          port: 8848  # Nacos
+        - protocol: TCP
+          port: 9200  # Elasticsearch
+        - protocol: TCP
+          port: 19530 # Milvus
+        - protocol: TCP
+          port: 9000  # MinIO
+        - protocol: TCP
+          port: 443   # HTTPS
+        - protocol: TCP
+          port: 53    # DNS

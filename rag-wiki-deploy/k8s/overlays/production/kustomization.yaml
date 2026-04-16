@@ -1,0 +1,90 @@
+# Production Overlay - 生产环境
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: rag-wiki-prod
+
+bases:
+  - ../../base
+
+# 生产环境镜像版本
+images:
+  - name: rag-wiki/gateway
+    newTag: v1.0.0
+  - name: rag-wiki/auth
+    newTag: v1.0.0
+  - name: rag-wiki/document
+    newTag: v1.0.0
+  - name: rag-wiki/approval
+    newTag: v1.0.0
+  - name: rag-wiki/audit
+    newTag: v1.0.0
+  - name: rag-wiki/ai
+    newTag: v1.0.0
+  - name: rag-wiki/python-ai
+    newTag: v1.0.0
+  - name: rag-wiki/frontend
+    newTag: v1.0.0
+
+# 生产环境副本数覆盖
+patchesStrategicMerge:
+  - |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: rag-wiki-gateway
+    spec:
+      replicas: 3
+  - |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: rag-wiki-auth
+    spec:
+      replicas: 2
+  - |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: rag-wiki-document
+    spec:
+      replicas: 2
+  - |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: rag-wiki-approval
+    spec:
+      replicas: 2
+  - |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: rag-wiki-audit
+    spec:
+      replicas: 2
+  - |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: rag-wiki-ai
+    spec:
+      replicas: 2
+  - |-
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: rag-wiki-python
+    spec:
+      replicas: 4
+      template:
+        spec:
+          containers:
+            - name: python-ai
+              resources:
+                requests:
+                  memory: "2Gi"
+                  cpu: "1000m"
+                limits:
+                  memory: "8Gi"
+                  cpu: "8000m"

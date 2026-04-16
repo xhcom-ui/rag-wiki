@@ -1,0 +1,128 @@
+# Grafana仪表盘配置 - Rag-Wiki Dashboard
+# 导入方式：Grafana -> Dashboards -> Import -> 粘贴JSON
+apiVersion: 1
+
+providers:
+  - name: 'Rag-Wiki Dashboards'
+    orgId: 1
+    folder: 'Rag-Wiki'
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false
+
+dashboard:
+  title: "Rag-Wiki 系统总览"
+  description: "企业级智能知识库系统监控仪表盘"
+  tags: ["rag-wiki", "overview"]
+  timezone: "browser"
+  panels:
+    # ===== 顶部统计卡片 =====
+    - title: "QPS (每秒请求数)"
+      type: stat
+      targets:
+        - expr: sum(rate(http_server_requests_seconds_count[1m]))
+      gridPos: { x: 0, y: 0, w: 6, h: 4 }
+
+    - title: "P95响应时间"
+      type: stat
+      targets:
+        - expr: histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket[5m])) by (le))
+      gridPos: { x: 6, y: 0, w: 6, h: 4 }
+
+    - title: "错误率 (%)"
+      type: stat
+      targets:
+        - expr: "sum(rate(http_server_requests_seconds_count{status=~'5..'}[5m])) / sum(rate(http_server_requests_seconds_count[5m])) * 100"
+      gridPos: { x: 12, y: 0, w: 6, h: 4 }
+
+    - title: "AI问答QPS"
+      type: stat
+      targets:
+        - expr: sum(rate(rag_wiki_rag_query_total[1m]))
+      gridPos: { x: 18, y: 0, w: 6, h: 4 }
+
+    # ===== 服务状态 =====
+    - title: "服务健康状态"
+      type: table
+      targets:
+        - expr: up{job=~"rag-wiki.*"}
+      gridPos: { x: 0, y: 4, w: 12, h: 6 }
+
+    # ===== 请求量趋势 =====
+    - title: "请求量趋势 (QPS)"
+      type: timeseries
+      targets:
+        - expr: sum(rate(http_server_requests_seconds_count[1m])) by (service)
+      gridPos: { x: 12, y: 4, w: 12, h: 6 }
+
+    # ===== 响应时间分布 =====
+    - title: "P50/P95/P99响应时间"
+      type: timeseries
+      targets:
+        - expr: histogram_quantile(0.50, sum(rate(http_server_requests_seconds_bucket[5m])) by (le, service))
+          legendFormat: "P50 - {{service}}"
+        - expr: histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket[5m])) by (le, service))
+          legendFormat: "P95 - {{service}}"
+        - expr: histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket[5m])) by (le, service))
+          legendFormat: "P99 - {{service}}"
+      gridPos: { x: 0, y: 10, w: 12, h: 8 }
+
+    # ===== AI服务指标 =====
+    - title: "RAG问答成功率"
+      type: gauge
+      targets:
+        - expr: "sum(rate(rag_wiki_rag_query_success_total[5m])) / sum(rate(rag_wiki_rag_query_total[5m])) * 100"
+      gridPos: { x: 12, y: 10, w: 6, h: 8 }
+
+    - title: "LLM调用延迟"
+      type: timeseries
+      targets:
+        - expr: histogram_quantile(0.95, sum(rate(rag_wiki_llm_call_duration_seconds_bucket[5m])) by (le))
+          legendFormat: "P95"
+      gridPos: { x: 18, y: 10, w: 6, h: 8 }
+
+    # ===== 资源使用 =====
+    - title: "JVM内存使用"
+      type: timeseries
+      targets:
+        - expr: jvm_memory_used_bytes{area="heap"}
+          legendFormat: "Heap Used"
+        - expr: jvm_memory_max_bytes{area="heap"}
+          legendFormat: "Heap Max"
+      gridPos: { x: 0, y: 18, w: 8, h: 6 }
+
+    - title: "数据库连接池"
+      type: timeseries
+      targets:
+        - expr: hikaricp_connections_active
+          legendFormat: "Active"
+        - expr: hikaricp_connections_idle
+          legendFormat: "Idle"
+        - expr: hikaricp_connections_max
+          legendFormat: "Max"
+      gridPos: { x: 8, y: 18, w: 8, h: 6 }
+
+    - title: "Redis命中率"
+      type: gauge
+      targets:
+        - expr: "redis_keyspace_hits_total / (redis_keyspace_hits_total + redis_keyspace_misses_total) * 100"
+      gridPos: { x: 16, y: 18, w: 8, h: 6 }
+
+    # ===== 安全指标 =====
+    - title: "登录失败次数"
+      type: timeseries
+      targets:
+        - expr: increase(rag_wiki_auth_failure_total[5m])
+          legendFormat: "登录失败"
+        - expr: increase(rag_wiki_permission_violation_total[5m])
+          legendFormat: "权限违规"
+      gridPos: { x: 0, y: 24, w: 12, h: 6 }
+
+    - title: "审计操作分布"
+      type: piechart
+      targets:
+        - expr: sum(increase(rag_wiki_audit_action_total[1h])) by (action)
+      gridPos: { x: 12, y: 24, w: 12, h: 6 }

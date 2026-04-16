@@ -1,0 +1,67 @@
+# ============================================================
+# SkyWalking 分布式链路追踪配置
+# ============================================================
+#
+# 使用方式：
+# 1. 部署 SkyWalking OAP Server + UI
+# 2. Java服务启动时添加 agent 参数
+# 3. Python服务使用 opentelemetry-sdk
+
+# ==================== Java Agent 启动参数 ====================
+# 在 docker-compose 或 K8s 中添加以下 JVM 参数：
+#
+# JAVA_OPTS: >
+#   -javaagent:/skywalking/agent/skywalking-agent.jar
+#   -Dskywalking.agent.service_name=rag-wiki-auth
+#   -Dskywalking.collector.backend_service=skywalking-oap:11800
+#   -Dskywalking.agent.span_limit=2000
+#   -Dskywalking.agent.sample_n_per_3_secs=3
+
+# ==================== SkyWalking Agent 配置 ====================
+# /skywalking/agent/config/agent.config
+
+skywalking:
+  agent:
+    service_name: ${SW_SERVICE_NAME:rag-wiki}
+    collector:
+      backend_service: ${SW_OAP_ADDR:skywalking-oap:11800}
+    sampling:
+      rate: ${SW_SAMPLING_RATE:5000}  # 采样率 5000/10000 = 50%
+    logging:
+      level: INFO
+      dir: /tmp/skywalking-logs
+
+  # OAP Server 配置
+  oap:
+    image: apache/skywalking-oap-server:9.7.0
+    ports:
+      - "11800:11800"  # gRPC
+      - "12800:12800"  # HTTP
+    storage: elasticsearch
+    es:
+      cluster_nodes: ${ES_NODES:elasticsearch:9200}
+
+  # UI 配置
+  ui:
+    image: apache/skywalking-ui:9.7.0
+    ports:
+      - "8080:8080"
+    oap_services: ${SW_OAP_ADDR:skywalking-oap:12800}
+
+# ==================== Python OpenTelemetry 配置 ====================
+# Python服务使用 OpenTelemetry SDK 替代 SkyWalking Agent
+# pip install opentelemetry-api opentelemetry-sdk opentelemetry-exporter-otlp
+
+otel:
+  service_name: rag-wiki-python
+  exporter:
+    otlp:
+      endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT:http://skywalking-oap:11800}
+  resource:
+    attributes:
+      service.name: rag-wiki-python
+      service.version: 1.0.0
+  traces:
+    sampler:
+      type: parentbased_traceidratio
+      arg: 0.5

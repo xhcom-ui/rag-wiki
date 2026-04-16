@@ -1,0 +1,599 @@
+# Gateway Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-wiki-gateway
+  namespace: rag-wiki
+  labels:
+    app: rag-wiki-gateway
+    tier: gateway
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: rag-wiki-gateway
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: rag-wiki-gateway
+        tier: gateway
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/actuator/prometheus"
+    spec:
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: rag-wiki-gateway
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: gateway
+          image: rag-wiki/gateway:latest
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "prod"
+            - name: SPRING_CLOUD_NACOS_SERVER_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: rag-wiki-config
+                  key: nacos.server-addr
+            - name: MYSQL_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: rag-wiki-config
+                  key: mysql.host
+            - name: REDIS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: rag-wiki-config
+                  key: redis.host
+          envFrom:
+            - secretRef:
+                name: rag-wiki-secrets
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "200m"
+            limits:
+              memory: "512Mi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: rag-wiki-gateway-config
+
+---
+# Gateway Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: rag-wiki-gateway
+  namespace: rag-wiki
+  labels:
+    app: rag-wiki-gateway
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
+      name: http
+  selector:
+    app: rag-wiki-gateway
+
+---
+# Auth Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-wiki-auth
+  namespace: rag-wiki
+  labels:
+    app: rag-wiki-auth
+    tier: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: rag-wiki-auth
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: rag-wiki-auth
+        tier: backend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8081"
+        prometheus.io/path: "/actuator/prometheus"
+    spec:
+      containers:
+        - name: auth
+          image: rag-wiki/auth:latest
+          ports:
+            - containerPort: 8081
+              name: http
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "prod"
+          envFrom:
+            - secretRef:
+                name: rag-wiki-secrets
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "200m"
+            limits:
+              memory: "512Mi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8081
+            initialDelaySeconds: 60
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8081
+            initialDelaySeconds: 30
+            periodSeconds: 10
+
+---
+# Auth Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: rag-wiki-auth
+  namespace: rag-wiki
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8081
+      targetPort: 8081
+      protocol: TCP
+  selector:
+    app: rag-wiki-auth
+
+---
+# Document Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-wiki-document
+  namespace: rag-wiki
+  labels:
+    app: rag-wiki-document
+    tier: backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: rag-wiki-document
+  template:
+    metadata:
+      labels:
+        app: rag-wiki-document
+        tier: backend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8082"
+        prometheus.io/path: "/actuator/prometheus"
+    spec:
+      containers:
+        - name: document
+          image: rag-wiki/document:latest
+          ports:
+            - containerPort: 8082
+              name: http
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "prod"
+          envFrom:
+            - secretRef:
+                name: rag-wiki-secrets
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "300m"
+            limits:
+              memory: "1Gi"
+              cpu: "2000m"
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8082
+            initialDelaySeconds: 60
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8082
+            initialDelaySeconds: 30
+            periodSeconds: 10
+
+---
+# Document Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: rag-wiki-document
+  namespace: rag-wiki
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8082
+      targetPort: 8082
+      protocol: TCP
+  selector:
+    app: rag-wiki-document
+
+---
+# Python AI Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-wiki-python
+  namespace: rag-wiki
+  labels:
+    app: rag-wiki-python
+    tier: ai
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: rag-wiki-python
+  template:
+    metadata:
+      labels:
+        app: rag-wiki-python
+        tier: ai
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: python-ai
+          image: rag-wiki/python-ai:latest
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: ENVIRONMENT
+              value: "production"
+          envFrom:
+            - secretRef:
+                name: rag-wiki-secrets
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "4Gi"
+              cpu: "4000m"
+              nvidia.com/gpu: "0"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 90
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+
+---
+# Python AI Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: rag-wiki-python
+  namespace: rag-wiki
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8000
+      targetPort: 8000
+      protocol: TCP
+  selector:
+    app: rag-wiki-python
+
+---
+# Frontend Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-wiki-frontend
+  namespace: rag-wiki
+  labels:
+    app: rag-wiki-frontend
+    tier: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: rag-wiki-frontend
+  template:
+    metadata:
+      labels:
+        app: rag-wiki-frontend
+        tier: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: rag-wiki/frontend:latest
+          ports:
+            - containerPort: 80
+              name: http
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "200m"
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 15
+
+---
+# Frontend Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: rag-wiki-frontend
+  namespace: rag-wiki
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+  selector:
+    app: rag-wiki-frontend
+
+---
+# Approval Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-wiki-approval
+  namespace: rag-wiki
+  labels:
+    app: rag-wiki-approval
+    tier: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rag-wiki-approval
+  template:
+    metadata:
+      labels:
+        app: rag-wiki-approval
+        tier: backend
+    spec:
+      containers:
+        - name: approval
+          image: rag-wiki/approval:latest
+          ports:
+            - containerPort: 8083
+              name: http
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "prod"
+            - name: SPRING_CLOUD_NACOS_SERVER_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: rag-wiki-config
+                  key: nacos-addr
+            - name: MYSQL_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: rag-wiki-config
+                  key: mysql-host
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "200m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+
+---
+# Approval Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: rag-wiki-approval
+  namespace: rag-wiki
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8083
+      targetPort: 8083
+      protocol: TCP
+  selector:
+    app: rag-wiki-approval
+
+---
+# Audit Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-wiki-audit
+  namespace: rag-wiki
+  labels:
+    app: rag-wiki-audit
+    tier: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rag-wiki-audit
+  template:
+    metadata:
+      labels:
+        app: rag-wiki-audit
+        tier: backend
+    spec:
+      containers:
+        - name: audit
+          image: rag-wiki/audit:latest
+          ports:
+            - containerPort: 8084
+              name: http
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "prod"
+            - name: SPRING_CLOUD_NACOS_SERVER_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: rag-wiki-config
+                  key: nacos-addr
+            - name: MYSQL_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: rag-wiki-config
+                  key: mysql-host
+            - name: REDIS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: rag-wiki-config
+                  key: redis-host
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "200m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+
+---
+# Audit Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: rag-wiki-audit
+  namespace: rag-wiki
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8084
+      targetPort: 8084
+      protocol: TCP
+  selector:
+    app: rag-wiki-audit
+
+---
+# AI Memory Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-wiki-ai
+  namespace: rag-wiki
+  labels:
+    app: rag-wiki-ai
+    tier: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rag-wiki-ai
+  template:
+    metadata:
+      labels:
+        app: rag-wiki-ai
+        tier: backend
+    spec:
+      containers:
+        - name: ai
+          image: rag-wiki/ai:latest
+          ports:
+            - containerPort: 8085
+              name: http
+          env:
+            - name: SPRING_PROFILES_ACTIVE
+              value: "prod"
+            - name: SPRING_CLOUD_NACOS_SERVER_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: rag-wiki-config
+                  key: nacos-addr
+            - name: MYSQL_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: rag-wiki-config
+                  key: mysql-host
+            - name: REDIS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: rag-wiki-config
+                  key: redis-host
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "200m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+
+---
+# AI Memory Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: rag-wiki-ai
+  namespace: rag-wiki
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8085
+      targetPort: 8085
+      protocol: TCP
+  selector:
+    app: rag-wiki-ai

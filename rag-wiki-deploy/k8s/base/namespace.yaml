@@ -1,0 +1,8 @@
+# Rag-Wiki Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rag-wiki
+  labels:
+    app.kubernetes.io/name: rag-wiki
+    app.kubernetes.io/part-of: rag-wiki

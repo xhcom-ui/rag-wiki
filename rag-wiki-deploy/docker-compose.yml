@@ -1,0 +1,380 @@
+version: '3.8'
+
+services:
+  # ==================== 基础设施 ====================
+
+  # MySQL
+  mysql:
+    image: mysql:8.0
+    container_name: rag-wiki-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_DATABASE: rag_wiki
+      MYSQL_CHARSET: utf8mb4
+      MYSQL_COLLATION: utf8mb4_general_ci
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_general_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis
+  redis:
+    image: redis:7.0-alpine
+    container_name: rag-wiki-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MinIO
+  minio:
+    image: minio/minio:latest
+    container_name: rag-wiki-minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # RabbitMQ
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    container_name: rag-wiki-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  # Elasticsearch
+  elasticsearch:
+    image: elasticsearch:8.12.0
+    container_name: rag-wiki-es
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+
+  # Milvus (Standalone)
+  milvus-etcd:
+    image: quay.io/coreos/etcd:v3.5.5
+    container_name: rag-wiki-milvus-etcd
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+    volumes:
+      - etcd_data:/etcd
+
+  milvus-minio:
+    image: minio/minio:latest
+    container_name: rag-wiki-milvus-minio
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+    volumes:
+      - milvus_minio_data:/minio_data
+    command: server /minio_data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  milvus:
+    image: milvusdb/milvus:v2.4.0
+    container_name: rag-wiki-milvus
+    depends_on:
+      - milvus-etcd
+      - milvus-minio
+    environment:
+      ETCD_ENDPOINTS: milvus-etcd:2379
+      MINIO_ADDRESS: milvus-minio:9000
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    volumes:
+      - milvus_data:/var/lib/milvus
+
+  # Nacos
+  nacos:
+    image: nacos/nacos-server:v2.3.0
+    container_name: rag-wiki-nacos
+    environment:
+      MODE: standalone
+      SPRING_DATASOURCE_PLATFORM: mysql
+      MYSQL_SERVICE_HOST: mysql
+      MYSQL_SERVICE_PORT: 3306
+      MYSQL_SERVICE_DB_NAME: nacos
+      MYSQL_SERVICE_USER: root
+      MYSQL_SERVICE_PASSWORD: root123
+    ports:
+      - "8848:8848"
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  # ==================== Java 服务 ====================
+
+  rag-wiki-gateway:
+    build:
+      context: ../rag-wiki-java
+      dockerfile: Dockerfile
+      args:
+        SERVICE: rag-wiki-gateway
+    container_name: rag-wiki-gateway
+    ports:
+      - "8080:8080"
+    environment:
+      NACOS_ADDR: nacos:8848
+      REDIS_HOST: redis
+    depends_on:
+      - nacos
+      - redis
+
+  rag-wiki-auth:
+    build:
+      context: ../rag-wiki-java
+      dockerfile: Dockerfile
+      args:
+        SERVICE: rag-wiki-auth
+    container_name: rag-wiki-auth
+    ports:
+      - "8081:8081"
+    environment:
+      NACOS_ADDR: nacos:8848
+      MYSQL_HOST: mysql
+      REDIS_HOST: redis
+      SPRING_PROFILES_ACTIVE: prod
+    depends_on:
+      - nacos
+      - mysql
+      - redis
+
+  rag-wiki-document:
+    build:
+      context: ../rag-wiki-java
+      dockerfile: Dockerfile
+      args:
+        SERVICE: rag-wiki-document
+    container_name: rag-wiki-document
+    ports:
+      - "8082:8082"
+    environment:
+      NACOS_ADDR: nacos:8848
+      MYSQL_HOST: mysql
+      REDIS_HOST: redis
+      RABBITMQ_HOST: rabbitmq
+      MINIO_ENDPOINT: http://minio:9000
+      SPRING_PROFILES_ACTIVE: prod
+    depends_on:
+      - nacos
+      - mysql
+      - redis
+      - rabbitmq
+      - minio
+
+  rag-wiki-approval:
+    build:
+      context: ../rag-wiki-java
+      dockerfile: Dockerfile
+      args:
+        SERVICE: rag-wiki-approval
+    container_name: rag-wiki-approval
+    ports:
+      - "8083:8083"
+    environment:
+      NACOS_ADDR: nacos:8848
+      MYSQL_HOST: mysql
+      SPRING_PROFILES_ACTIVE: prod
+    depends_on:
+      - nacos
+      - mysql
+
+  rag-wiki-audit:
+    build:
+      context: ../rag-wiki-java
+      dockerfile: Dockerfile
+      args:
+        SERVICE: rag-wiki-audit
+    container_name: rag-wiki-audit
+    ports:
+      - "8084:8084"
+    environment:
+      NACOS_ADDR: nacos:8848
+      MYSQL_HOST: mysql
+      REDIS_HOST: redis
+      SPRING_PROFILES_ACTIVE: prod
+    depends_on:
+      - nacos
+      - mysql
+      - redis
+      - elasticsearch
+
+  rag-wiki-ai:
+    build:
+      context: ../rag-wiki-java
+      dockerfile: Dockerfile
+      args:
+        SERVICE: rag-wiki-ai
+    container_name: rag-wiki-ai
+    ports:
+      - "8085:8085"
+    environment:
+      NACOS_ADDR: nacos:8848
+      MYSQL_HOST: mysql
+      REDIS_HOST: redis
+      SPRING_PROFILES_ACTIVE: prod
+    depends_on:
+      - nacos
+      - mysql
+      - redis
+
+  rag-wiki-job:
+    build:
+      context: ../rag-wiki-java
+      dockerfile: Dockerfile
+      args:
+        SERVICE: rag-wiki-job
+    container_name: rag-wiki-job
+    ports:
+      - "8086:8086"
+    environment:
+      NACOS_ADDR: nacos:8848
+      MYSQL_HOST: mysql
+      SPRING_PROFILES_ACTIVE: prod
+      XXL_JOB_ADMIN: http://xxl-job-admin:8080/xxl-job-admin
+    depends_on:
+      - nacos
+      - mysql
+
+  # ==================== Python AI 服务 ====================
+
+  rag-wiki-python:
+    build:
+      context: ../rag-wiki-python
+      dockerfile: Dockerfile
+    container_name: rag-wiki-python
+    ports:
+      - "8000:8000"
+    environment:
+      SERVICE_PORT: 8000
+      MYSQL_HOST: mysql
+      REDIS_HOST: redis
+      MILVUS_HOST: milvus
+      MINIO_ENDPOINT: minio:9000
+      RABBITMQ_HOST: rabbitmq
+      ES_HOST: elasticsearch
+      VECTOR_DB_TYPE: milvus
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      - mysql
+      - redis
+      - milvus
+      - minio
+      - rabbitmq
+      - elasticsearch
+
+  # ==================== 前端 ====================
+
+  rag-wiki-frontend:
+    build:
+      context: ../rag-wiki-frontend
+      dockerfile: Dockerfile
+    container_name: rag-wiki-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - rag-wiki-gateway
+
+  # ==================== 可观测性 ====================
+
+  # SkyWalking OAP Server
+  skywalking-oap:
+    image: apache/skywalking-oap-server:9.7.0
+    container_name: rag-wiki-skywalking-oap
+    environment:
+      SW_STORAGE: elasticsearch
+      SW_STORAGE_ES_CLUSTER_NODES: elasticsearch:9200
+      SW_HEALTH_CHECKER: default
+    ports:
+      - "11800:11800"
+      - "12800:12800"
+    depends_on:
+      - elasticsearch
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:12800/internal/l7check || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  # SkyWalking UI
+  skywalking-ui:
+    image: apache/skywalking-ui:9.7.0
+    container_name: rag-wiki-skywalking-ui
+    environment:
+      SW_OAP_ADDRESS: http://skywalking-oap:12800
+    ports:
+      - "8180:8080"
+    depends_on:
+      - skywalking-oap
+
+  # HashiCorp Vault (密钥管理)
+  vault:
+    image: hashicorp/vault:1.15
+    container_name: rag-wiki-vault
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: "rag-wiki-dev-token"
+      VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
+    ports:
+      - "8200:8200"
+    cap_add:
+      - IPC_LOCK
+
+volumes:
+  mysql_data:
+  redis_data:
+  minio_data:
+  rabbitmq_data:
+  es_data:
+  etcd_data:
+  milvus_minio_data:
+  milvus_data:

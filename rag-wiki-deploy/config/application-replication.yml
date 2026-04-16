@@ -1,0 +1,91 @@
+# ============================================================
+# 数据库读写分离配置
+# ============================================================
+# 
+# 基于 MySQL 主从复制实现读写分离
+# 写操作走主库，读操作走从库
+# 使用 MyBatis-Plus 的动态数据源实现
+
+# ==================== 主从数据源配置 ====================
+spring:
+  datasource:
+    dynamic:
+      primary: master  # 默认使用主库
+      strict: true     # 严格匹配，未匹配到数据源时抛异常
+      datasource:
+        master:
+          url: jdbc:mysql://${MYSQL_HOST:localhost}:3306/rag_wiki?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=true
+          username: ${MYSQL_USER:root}
+          password: ${MYSQL_PASSWORD:}
+          driver-class-name: com.mysql.cj.jdbc.Driver
+          # HikariCP 连接池配置
+          hikari:
+            pool-name: HikariCP-Master
+            minimum-idle: 5
+            maximum-pool-size: 20
+            idle-timeout: 300000
+            max-lifetime: 1800000
+            connection-timeout: 30000
+        slave_1:
+          url: jdbc:mysql://${MYSQL_SLAVE_HOST:localhost}:3307/rag_wiki?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=true
+          username: ${MYSQL_SLAVE_USER:readonly}
+          password: ${MYSQL_SLAVE_PASSWORD:}
+          driver-class-name: com.mysql.cj.jdbc.Driver
+          hikari:
+            pool-name: HikariCP-Slave1
+            minimum-idle: 5
+            maximum-pool-size: 20
+            idle-timeout: 300000
+            max-lifetime: 1800000
+            connection-timeout: 30000
+        slave_2:
+          url: jdbc:mysql://${MYSQL_SLAVE2_HOST:localhost}:3308/rag_wiki?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=true
+          username: ${MYSQL_SLAVE2_USER:readonly}
+          password: ${MYSQL_SLAVE2_PASSWORD:}
+          driver-class-name: com.mysql.cj.jdbc.Driver
+          hikari:
+            pool-name: HikariCP-Slave2
+            minimum-idle: 3
+            maximum-pool-size: 15
+            idle-timeout: 300000
+            max-lifetime: 1800000
+            connection-timeout: 30000
+
+      # 负载均衡策略
+      load-balance:
+        strategy: round_robin  # round_robin / random / weight
+
+# ==================== 读写分离规则 ====================
+# 默认规则：
+# - 所有 @Transactional(readOnly=true) 方法走从库
+# - 所有写操作自动走主库
+# - 可通过 @DS("slave_1") 注解指定数据源
+
+# ==================== MySQL 主从复制配置参考 ====================
+# 主库 my.cnf:
+#   server-id = 1
+#   log-bin = mysql-bin
+#   binlog-format = ROW
+#   binlog-do-db = rag_wiki
+#   expire-logs-days = 7
+#
+# 从库 my.cnf:
+#   server-id = 2 (每个从库唯一)
+#   relay-log = relay-bin
+#   read-only = 1
+#   replicate-do-db = rag_wiki
+#
+# 从库设置:
+#   CHANGE MASTER TO MASTER_HOST='mysql-master', MASTER_USER='replicator',
+#   MASTER_PASSWORD='<password>', MASTER_LOG_FILE='mysql-bin.000001', MASTER_LOG_POS=0;
+#   START SLAVE;
+
+# ==================== Redis 读写分离 ====================
+# Redis Sentinel 或 Cluster 模式已支持自动读写分离
+# Spring Data Redis 配置 Sentinel 模式：
+# spring:
+#   data:
+#     redis:
+#       sentinel:
+#         master: mymaster
+#         nodes: redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
