@@ -113,13 +113,59 @@ import {
 } from '@vicons/antd'
 import { statisticsApi } from '@/api'
 
+interface OverviewStats {
+  totalUsers?: number
+  totalDocuments?: number
+  totalSpaces?: number
+  todayNewDocuments?: number
+}
+
+interface TrendPoint {
+  date: string
+  count: number
+}
+
+interface AIStats {
+  totalQueries?: number
+  successQueries?: number
+  avgResponseTime?: number
+  dailyTrend?: TrendPoint[]
+}
+
+interface SpaceCount {
+  spaceName: string
+  count: number
+}
+
+interface TypeCount {
+  type?: string
+  count: number
+}
+
+interface DocumentStats {
+  bySpace: SpaceCount[]
+  byType: TypeCount[]
+}
+
+interface HotQuery {
+  query: string
+  count: number
+}
+
+interface DashboardPayload {
+  overview?: OverviewStats
+  aiStats?: AIStats
+  documentStats?: Partial<DocumentStats>
+  hotQueries?: HotQuery[]
+}
+
 const message = useMessage()
 
 // 数据
-const overview = ref<any>({})
-const aiStats = ref<any>({})
-const documentStats = ref<any>({ bySpace: [], byType: [] })
-const hotQueries = ref<any[]>([])
+const overview = ref<OverviewStats>({})
+const aiStats = ref<AIStats>({})
+const documentStats = ref<DocumentStats>({ bySpace: [], byType: [] })
+const hotQueries = ref<HotQuery[]>([])
 
 // 图表引用
 const aiTrendChart = ref<HTMLElement>()
@@ -128,21 +174,22 @@ const docTypeChart = ref<HTMLElement>()
 // 加载数据
 const loadData = async () => {
   try {
-    const res = await statisticsApi.getDashboardData()
-    if (res.code === 200) {
-      const data = res.data
-      overview.value = data.overview
-      aiStats.value = data.aiStats
-      documentStats.value = data.documentStats
-      hotQueries.value = data.hotQueries
-      
-      // 渲染图表
-      nextTick(() => {
-        renderAITrendChart()
-        renderDocTypeChart()
-      })
+    const response = await statisticsApi.getDashboardData()
+    const data = (response.data || {}) as DashboardPayload
+    overview.value = data.overview || {}
+    aiStats.value = data.aiStats || {}
+    documentStats.value = {
+      bySpace: data.documentStats?.bySpace || [],
+      byType: data.documentStats?.byType || [],
     }
-  } catch (error) {
+    hotQueries.value = data.hotQueries || []
+    
+    // 渲染图表
+    nextTick(() => {
+      renderAITrendChart()
+      renderDocTypeChart()
+    })
+  } catch {
     message.error('加载统计数据失败')
   }
 }
@@ -158,13 +205,13 @@ const renderAITrendChart = () => {
     tooltip: { trigger: 'axis' },
     xAxis: {
       type: 'category',
-      data: trend.map((item: any) => item.date)
+      data: trend.map((item) => item.date)
     },
     yAxis: { type: 'value' },
     series: [{
       name: '查询次数',
       type: 'line',
-      data: trend.map((item: any) => item.count),
+      data: trend.map((item) => item.count),
       smooth: true,
       areaStyle: {
         color: {
@@ -193,7 +240,7 @@ const renderDocTypeChart = () => {
     series: [{
       type: 'pie',
       radius: '50%',
-      data: typeData.map((item: any) => ({
+      data: typeData.map((item) => ({
         name: item.type || '未知',
         value: item.count
       })),

@@ -54,24 +54,27 @@ const rules = {
 }
 const oauth2Enabled = reactive({ wecom: true, dingtalk: true, generic: true })
 
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+  return fallback
+}
+
 async function handleLogin() {
   loading.value = true
   try {
-    const params: any = { username: formData.username, password: formData.password }
-    if (show2FA.value && formData.totpCode) {
-      params.totpCode = formData.totpCode
-      params.loginType = 'TWO_FACTOR'
-    }
-    await userStore.login(formData.username, formData.password)
+    await userStore.login(formData.username, formData.password, formData.totpCode)
     message.success('登录成功')
     router.push('/')
-  } catch (e: any) {
+  } catch (error: unknown) {
+    const errorMessage = getErrorMessage(error, '登录失败')
     // 如果返回需要2FA验证
-    if (e.message?.includes('2FA') || e.message?.includes('双因素')) {
+    if (errorMessage.includes('2FA') || errorMessage.includes('双因素')) {
       show2FA.value = true
       message.info('请输入双因素验证码')
     } else {
-      message.error(e.message || '登录失败')
+      message.error(errorMessage)
     }
   } finally {
     loading.value = false
@@ -80,13 +83,13 @@ async function handleLogin() {
 
 async function handleOAuth2Login(provider: string) {
   try {
-    const res: any = await authApi.getOAuth2Authorize(provider)
+    const res = await authApi.getOAuth2Authorize(provider)
     const authUrl = res.data
     if (authUrl) {
       window.location.href = authUrl
     }
-  } catch (e: any) {
-    message.error(e.message || 'OAuth2登录失败')
+  } catch (error: unknown) {
+    message.error(getErrorMessage(error, 'OAuth2登录失败'))
   }
 }
 </script>

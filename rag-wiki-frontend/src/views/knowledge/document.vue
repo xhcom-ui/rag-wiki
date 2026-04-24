@@ -3,14 +3,14 @@
     <!-- 返回按钮 -->
     <n-page-header :title="documentInfo.documentName || '文档详情'" @back="router.back()">
       <template #subtitle>
-        <n-tag :type="statusMap[documentInfo.status]?.type || 'default'" size="small">
-          {{ statusMap[documentInfo.status]?.text || documentInfo.status }}
+        <n-tag :type="statusMap[currentStatus]?.type || 'default'" size="small">
+          {{ statusMap[currentStatus]?.text || documentInfo.status }}
         </n-tag>
       </template>
       <template #extra>
         <n-space>
-          <n-button v-if="documentInfo.status === 'DRAFT'" type="primary" @click="handleParse" :loading="parsing">解析文档</n-button>
-          <n-button v-if="documentInfo.status === 'PUBLISHED'" @click="handleVectorize" :loading="vectorizing">重新向量化</n-button>
+          <n-button v-if="currentStatus === 'DRAFT'" type="primary" @click="handleParse" :loading="parsing">解析文档</n-button>
+          <n-button v-if="currentStatus === 'PUBLISHED'" @click="handleVectorize" :loading="vectorizing">重新向量化</n-button>
           <n-button type="error" @click="handleDelete">删除</n-button>
         </n-space>
       </template>
@@ -35,7 +35,7 @@
     </n-card>
 
     <!-- 解析进度 -->
-    <n-card v-if="documentInfo.status === 'PARSING'" title="解析进度" class="progress-card">
+    <n-card v-if="currentStatus === 'PARSING'" title="解析进度" class="progress-card">
       <n-steps :current="parseStep" status="process">
         <n-step title="文件上传" description="文件已上传到存储服务" />
         <n-step title="文档解析" description="提取文本内容和结构" />
@@ -146,10 +146,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, h } from 'vue'
+import { computed, ref, reactive, onMounted, h } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { NButton, NSpace, NTag, useMessage, type DataTableColumns } from 'naive-ui'
 import { documentApi, parseApi, vectorApi, interactionApi } from '@/api'
+import type {
+  DocumentCommentVO,
+  DocumentPermissionVO,
+  DocumentVersionVO,
+  DocumentVO,
+} from '@/types/api'
 import { sanitizeHTML } from '@/utils/sanitize'
 
 const router = useRouter()
@@ -169,7 +175,18 @@ const parseProgress = ref(0)
 const documentContent = ref('')
 const avgChunkLength = ref(0)
 
-const documentInfo = ref<any>({
+interface ChunkRow {
+  chunkId: string
+  documentName: string
+  pageNum: string | number
+  charCount: number
+  chunkStrategy?: string
+  vectorized: boolean
+  createdAt: string
+  content: string
+}
+
+const documentInfo = ref<Partial<DocumentVO>>({
   documentId: '',
   documentName: '',
   documentType: '',
@@ -181,59 +198,59 @@ const documentInfo = ref<any>({
   createdAt: '',
 })
 
-const chunks = ref<any[]>([])
-const versions = ref<any[]>([])
-const permissions = ref<any[]>([])
-const currentChunk = ref<any>(null)
+const chunks = ref<ChunkRow[]>([])
+const versions = ref<DocumentVersionVO[]>([])
+const permissions = ref<DocumentPermissionVO[]>([])
+const currentChunk = ref<ChunkRow | null>(null)
 
 // ==================== 互动相关 ====================
 const isFavorited = ref(false)
 const isLiked = ref(false)
 const likeCount = ref(0)
-const comments = ref<any[]>([])
+const comments = ref<DocumentCommentVO[]>([])
 const commentContent = ref('')
+const chunkSourceCache = ref<ChunkRow[]>([])
 
 async function loadInteractions() {
   try {
-    const [favRes, likeCountRes, likeCheckRes, commentsRes]: any[] = await Promise.allSettled([
+    const [favRes, likeCountRes, commentsRes] = await Promise.allSettled([
       interactionApi.checkFavorite(documentId),
       interactionApi.getLikeCount(documentId),
-      // 点赞状态 - 通过toggle接口的响应判断，这里先加载点赞数
-      Promise.resolve({ status: 'fulfilled', value: { data: false } }),
       interactionApi.getComments(documentId),
     ])
-    if (favRes.status === 'fulfilled' && favRes.value?.data !== undefined) {
-      isFavorited.value = !!favRes.value.data
+    if (favRes.status === 'fulfilled' && favRes.value?.data) {
+      isFavorited.value = !!favRes.value.data.favorited
     }
-    if (likeCountRes.status === 'fulfilled' && likeCountRes.value?.data !== undefined) {
-      likeCount.value = likeCountRes.value.data
+    if (likeCountRes.status === 'fulfilled' && likeCountRes.value?.data) {
+      likeCount.value = Number(likeCountRes.value.data.likeCount || 0)
+      isLiked.value = !!likeCountRes.value.data.liked
     }
     if (commentsRes.status === 'fulfilled' && commentsRes.value?.data) {
       comments.value = commentsRes.value.data
     }
-  } catch (e: any) {
-    console.warn('加载互动数据失败', e)
+  } catch (error: unknown) {
+    console.warn('加载互动数据失败', error)
   }
 }
 
 async function handleToggleFavorite() {
   try {
-    const res: any = await interactionApi.toggleFavorite(documentId)
-    isFavorited.value = !isFavorited.value
+    const res = await interactionApi.toggleFavorite(documentId)
+    isFavorited.value = !!res.data?.favorited
     message.success(isFavorited.value ? '已收藏' : '已取消收藏')
-  } catch (e: any) {
-    message.error(e.message || '操作失败')
+  } catch (error: unknown) {
+    message.error(error instanceof Error ? error.message : '操作失败')
   }
 }
 
 async function handleToggleLike() {
   try {
-    const res: any = await interactionApi.toggleLike(documentId)
-    isLiked.value = !isLiked.value
-    likeCount.value += isLiked.value ? 1 : -1
+    const res = await interactionApi.toggleLike(documentId)
+    isLiked.value = !!res.data?.liked
+    likeCount.value = Number(res.data?.likeCount || 0)
     message.success(isLiked.value ? '已点赞' : '已取消点赞')
-  } catch (e: any) {
-    message.error(e.message || '操作失败')
+  } catch (error: unknown) {
+    message.error(error instanceof Error ? error.message : '操作失败')
   }
 }
 
@@ -244,10 +261,10 @@ async function handleAddComment() {
     message.success('评论成功')
     commentContent.value = ''
     // 重新加载评论列表
-    const res: any = await interactionApi.getComments(documentId)
+    const res = await interactionApi.getComments(documentId)
     if (res.data) comments.value = res.data
-  } catch (e: any) {
-    message.error(e.message || '评论失败')
+  } catch (error: unknown) {
+    message.error(error instanceof Error ? error.message : '评论失败')
   }
 }
 
@@ -260,25 +277,27 @@ const statusMap: Record<string, { type: 'default' | 'info' | 'success' | 'warnin
   FAILED: { type: 'error', text: '解析失败' },
 }
 
-const chunkColumns: DataTableColumns = [
+const chunkColumns: DataTableColumns<ChunkRow> = [
   { title: '分块ID', key: 'chunkId', width: 120, ellipsis: { tooltip: true } },
   { title: '页码', key: 'pageNum', width: 70 },
   { title: '字符数', key: 'charCount', width: 80 },
   { title: '内容预览', key: 'content', ellipsis: { tooltip: true } },
-  { title: '向量化', key: 'vectorized', width: 80, render: (row: any) => h(NTag, { size: 'small', type: row.vectorized ? 'success' : 'default' }, () => row.vectorized ? '已生成' : '未生成') },
+  { title: '向量化', key: 'vectorized', width: 80, render: (row) => h(NTag, { size: 'small', type: row.vectorized ? 'success' : 'default' }, () => row.vectorized ? '已生成' : '未生成') },
   { title: '创建时间', key: 'createdAt', width: 170 },
   {
     title: '操作', key: 'actions', width: 80,
-    render: (row: any) => h(NButton, { size: 'small', onClick: () => { currentChunk.value = row; showChunkModal.value = true } }, () => '详情'),
+    render: (row) => h(NButton, { size: 'small', onClick: () => { currentChunk.value = row; showChunkModal.value = true } }, () => '详情'),
   },
 ]
 
-const permissionColumns: DataTableColumns = [
-  { title: '类型', key: 'type', width: 100, render: (row: any) => row.type === 'USER' ? '用户' : '部门' },
+const permissionColumns: DataTableColumns<DocumentPermissionVO> = [
+  { title: '类型', key: 'type', width: 100, render: (row) => row.type === 'USER' ? '用户' : '部门' },
   { title: '名称', key: 'name' },
-  { title: '权限', key: 'permission', width: 100, render: (row: any) => row.permission === 'READ' ? '只读' : '读写' },
+  { title: '权限', key: 'permission', width: 100, render: (row) => row.permission === 'READ' ? '只读' : '读写' },
   { title: '授权时间', key: 'createdAt', width: 170 },
 ]
+
+const currentStatus = computed(() => normalizeDocumentStatus(documentInfo.value.status))
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return bytes + ' B'
@@ -289,25 +308,21 @@ function formatSize(bytes: number): string {
 
 async function loadDocumentInfo() {
   try {
-    const res: any = await documentApi.get(documentId)
+    const res = await documentApi.get(documentId)
     documentInfo.value = res.data || {}
-  } catch (e: any) {
-    message.error(e.message || '加载失败')
+    documentContent.value = res.data?.content || res.data?.documentContent || ''
+    rebuildChunks()
+  } catch (error: unknown) {
+    message.error(error instanceof Error ? error.message : '加载失败')
   }
 }
 
 async function loadChunks() {
   chunkLoading.value = true
   try {
-    const res: any = await documentApi.list({ page: chunkPagination.page, pageSize: chunkPagination.pageSize, documentId })
-    chunks.value = res.data?.records || []
-    chunkPagination.itemCount = res.data?.total || 0
-    if (chunks.value.length > 0) {
-      const total = chunks.value.reduce((sum, c) => sum + (c.charCount || 0), 0)
-      avgChunkLength.value = Math.round(total / chunks.value.length)
-    }
-  } catch (e: any) {
-    message.error(e.message || '加载失败')
+    rebuildChunks()
+  } catch (error: unknown) {
+    message.error(error instanceof Error ? error.message : '加载分块失败')
   } finally {
     chunkLoading.value = false
   }
@@ -329,8 +344,8 @@ async function handleParse() {
     }, 1000)
     setTimeout(() => clearInterval(timer), 10000)
     loadDocumentInfo()
-  } catch (e: any) {
-    message.error(e.message || '提交失败')
+  } catch (error: unknown) {
+    message.error(error instanceof Error ? error.message : '提交失败')
   } finally {
     parsing.value = false
   }
@@ -341,8 +356,8 @@ async function handleVectorize() {
   try {
     await vectorApi.embed({ document_id: documentId })
     message.success('向量化任务已提交')
-  } catch (e: any) {
-    message.error(e.message || '提交失败')
+  } catch (error: unknown) {
+    message.error(error instanceof Error ? error.message : '提交失败')
   } finally {
     vectorizing.value = false
   }
@@ -350,30 +365,84 @@ async function handleVectorize() {
 
 async function handleDelete() {
   try {
+    if (!documentInfo.value.id) {
+      message.error('缺少文档主键，无法删除')
+      return
+    }
     await documentApi.delete(documentInfo.value.id)
     message.success('删除成功')
     router.back()
-  } catch (e: any) {
-    message.error(e.message || '删除失败')
+  } catch (error: unknown) {
+    message.error(error instanceof Error ? error.message : '删除失败')
   }
 }
 
 async function loadVersions() {
   try {
-    const res: any = await documentApi.getVersions(documentId)
+    const res = await documentApi.getVersions(documentId)
     versions.value = res.data || []
-  } catch (e: any) {
-    console.warn('加载版本历史失败', e)
+  } catch (error: unknown) {
+    console.warn('加载版本历史失败', error)
   }
 }
 
 async function loadPermissions() {
   try {
-    const res: any = await documentApi.getPermissions(documentId)
+    const res = await documentApi.getPermissions(documentId)
     permissions.value = res.data || []
-  } catch (e: any) {
-    console.warn('加载权限数据失败', e)
+  } catch (error: unknown) {
+    console.warn('加载权限数据失败', error)
   }
+}
+
+function normalizeDocumentStatus(status: unknown) {
+  if (status === 0 || status === '0' || status === 'DRAFT') return 'DRAFT'
+  if (status === 1 || status === '1' || status === 'PUBLISHED') return 'PUBLISHED'
+  if (status === 'PARSING' || status === 'PENDING' || status === 'VECTORIZING') return 'PARSING'
+  if (status === 2 || status === '2' || status === 'ARCHIVED') return 'ARCHIVED'
+  if (status === 'FAILED') return 'FAILED'
+  return String(status || 'DRAFT')
+}
+
+function rebuildChunks() {
+  const rawContent = documentContent.value.trim()
+  if (!rawContent) {
+    chunkSourceCache.value = []
+    chunks.value = []
+    chunkPagination.itemCount = 0
+    avgChunkLength.value = 0
+    return
+  }
+
+  const normalized = rawContent
+    .split(/\n{2,}/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+
+  chunkSourceCache.value = normalized.map((content, index) => ({
+    chunkId: `${documentId}-${index + 1}`,
+    documentName: documentInfo.value.documentName || '当前文档',
+    pageNum: '-',
+    charCount: content.length,
+    chunkStrategy: 'preview',
+    vectorized: currentStatus.value === 'PUBLISHED',
+    createdAt: documentInfo.value.createdAt || '-',
+    content,
+  }))
+
+  const keyword = chunkSearch.value.trim().toLowerCase()
+  const filtered = keyword
+    ? chunkSourceCache.value.filter((item) => item.content.toLowerCase().includes(keyword))
+    : chunkSourceCache.value
+
+  chunkPagination.itemCount = filtered.length
+  chunks.value = filtered.slice(
+    (chunkPagination.page - 1) * chunkPagination.pageSize,
+    chunkPagination.page * chunkPagination.pageSize,
+  )
+  avgChunkLength.value = filtered.length
+    ? Math.round(filtered.reduce((sum, item) => sum + item.charCount, 0) / filtered.length)
+    : 0
 }
 
 onMounted(() => {

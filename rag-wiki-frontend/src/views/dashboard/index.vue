@@ -196,18 +196,80 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { useMessage } from 'naive-ui'
 import * as echarts from 'echarts'
 import {
   BookOutline, DocumentTextOutline, ChatbubbleOutline, PeopleOutline,
   AddOutline, RocketOutline, CodeSlashOutline,
 } from '@vicons/ionicons5'
 import { statisticsApi, documentApi, ragApi, approvalApi, badcaseApi, interactionApi } from '@/api'
+import type { DocumentVO } from '@/types/api'
 
 const router = useRouter()
-const message = useMessage()
 
-const stats = ref({
+interface OverviewStats {
+  spaceCount: number
+  documentCount: number
+  todayQueryCount: number
+  activeUserCount: number
+  todayNewDocuments: number
+}
+
+interface QueryMessage {
+  content?: string
+}
+
+interface SessionHistoryRow {
+  sessionId: string
+  title?: string
+  createdAt?: string
+  updatedAt?: string
+  messages?: QueryMessage[]
+}
+
+interface RecentQueryItem {
+  id: string
+  query: string
+  answer?: string
+  time: string
+}
+
+interface TodoItem {
+  id: number
+  title: string
+  description: string
+  priority: 'HIGH' | 'MEDIUM' | 'LOW'
+}
+
+interface NoticeItem {
+  id: number
+  title: string
+  content: string
+  date: string
+}
+
+interface AIDailyTrendPoint {
+  date?: string
+  count?: number
+}
+
+interface AIStatisticsResponse {
+  totalQueries?: number
+  activeUsers?: number
+  dailyTrend?: AIDailyTrendPoint[]
+}
+
+interface OverviewResponse {
+  totalSpaces?: number
+  totalDocuments?: number
+  todayNewDocuments?: number
+}
+
+interface BadcaseStatsResponse {
+  pending?: number
+  pendingCount?: number
+}
+
+const stats = ref<OverviewStats>({
   spaceCount: 0,
   documentCount: 0,
   todayQueryCount: 0,
@@ -215,14 +277,15 @@ const stats = ref({
   todayNewDocuments: 0,
 })
 
-const recentQueries = ref<any[]>([])
-const recentDocuments = ref<any[]>([])
-const todos = ref<any[]>([])
-const notices = ref<any[]>([])
+const recentQueries = ref<RecentQueryItem[]>([])
+const recentDocuments = ref<Array<Partial<DocumentVO>>>([])
+const todos = ref<TodoItem[]>([])
+const notices = ref<NoticeItem[]>([])
 const storageUsed = ref(0)
 const storageTotal = ref(100 * 1024 * 1024 * 1024) // 100GB
 const chartRef = ref<HTMLElement | null>(null)
-let chartInstance: any = null
+let chartInstance: echarts.ECharts | null = null
+let resizeHandler: (() => void) | null = null
 
 const storageUsage = ref(0)
 
@@ -244,20 +307,22 @@ function formatSize(bytes: number): string {
 async function loadStats() {
   try {
     // 优先使用统计API获取完整数据
-    const res: any = await statisticsApi.getOverview()
+    const res = await statisticsApi.getOverview()
     if (res.code === 200 && res.data) {
-      stats.value.spaceCount = res.data.totalSpaces || 0
-      stats.value.documentCount = res.data.totalDocuments || 0
-      stats.value.todayNewDocuments = res.data.todayNewDocuments || 0
+      const data = res.data as OverviewResponse
+      stats.value.spaceCount = data.totalSpaces || 0
+      stats.value.documentCount = data.totalDocuments || 0
+      stats.value.todayNewDocuments = data.todayNewDocuments || 0
     }
   } catch { /* fallback */ }
 
   try {
     // 获取AI调用统计（今日）
     const today = new Date().toISOString().slice(0, 10)
-    const res: any = await statisticsApi.getAIStatistics(today, today)
+    const res = await statisticsApi.getAIStatistics(today, today)
     if (res.code === 200 && res.data) {
-      stats.value.todayQueryCount = res.data.totalQueries || 0
+      const data = res.data as AIStatisticsResponse
+      stats.value.todayQueryCount = data.totalQueries || 0
     }
   } catch { /* fallback */ }
 
@@ -265,32 +330,33 @@ async function loadStats() {
     // 获取用户活跃度（近7天）
     const endDate = new Date().toISOString().slice(0, 10)
     const startDate = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10)
-    const res: any = await statisticsApi.getUserActivity(startDate, endDate)
+    const res = await statisticsApi.getUserActivity(startDate, endDate)
     if (res.code === 200 && res.data) {
-      stats.value.activeUserCount = res.data.activeUsers || 0
+      const data = res.data as AIStatisticsResponse
+      stats.value.activeUserCount = data.activeUsers || 0
     }
   } catch { /* fallback */ }
 }
 
 async function loadRecentDocuments() {
   try {
-    const res: any = await documentApi.list({ pageSize: 5, sort: 'createdAt', order: 'desc' })
+    const res = await documentApi.list({ pageSize: 5, sort: 'createdAt', order: 'desc' })
     recentDocuments.value = res.data?.records || []
   } catch { /* ignore */ }
 }
 
 async function loadRecentQueries() {
   try {
-    const res: any = await ragApi.getSessionHistory({ pageSize: 5 })
+    const res = await ragApi.getSessionHistory({ pageSize: 5 })
     if (res.data?.records) {
-      recentQueries.value = res.data.records.map((session: any) => {
+      recentQueries.value = res.data.records.map((session: SessionHistoryRow) => {
         const firstQuery = session.messages?.[0]
         const firstAnswer = session.messages?.[1]
         return {
           id: session.sessionId,
           query: firstQuery?.content || session.title || '无标题对话',
           answer: firstAnswer?.content?.slice(0, 80),
-          time: formatTime(session.updatedAt || session.createdAt),
+          time: formatTime(session.updatedAt || session.createdAt || ''),
         }
       })
     }
@@ -301,18 +367,18 @@ async function loadRecentQueries() {
 
 async function loadTodos() {
   try {
-    // 加载待审批和待处理badcase
-    const [approvalRes, badcaseRes]: any[] = await Promise.allSettled([
+    const [approvalRes, badcaseRes] = await Promise.all([
       approvalApi.getByDocId('pending'),
       badcaseApi.getStats(),
-    ]).then(results => results.map(r => r.status === 'fulfilled' ? r.value : null))
+    ])
 
     todos.value = []
     if (approvalRes?.data) {
       todos.value.push({ id: 1, title: '审批待处理', description: '文档等待审批', priority: 'HIGH' })
     }
     if (badcaseRes?.data) {
-      const pending = badcaseRes.data.pendingCount || 0
+      const summary = badcaseRes.data as BadcaseStatsResponse
+      const pending = summary.pendingCount || summary.pending || 0
       if (pending > 0) {
         todos.value.push({ id: 2, title: 'Badcase待处理', description: `${pending}个Badcase待分析`, priority: 'MEDIUM' })
       }
@@ -356,27 +422,29 @@ function formatTime(dateStr: string): string {
 async function initChart() {
   if (!chartRef.value) return
 
+  chartInstance?.dispose()
   chartInstance = echarts.init(chartRef.value)
 
   try {
     const endDate = new Date().toISOString().slice(0, 10)
     const startDate = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10)
-    const res: any = await statisticsApi.getAIStatistics(startDate, endDate)
+    const res = await statisticsApi.getAIStatistics(startDate, endDate)
+    const aiStats = res.data as AIStatisticsResponse | undefined
 
-    if (res.code === 200 && res.data?.dailyTrend) {
-      const trend = res.data.dailyTrend
+    if (res.code === 200 && aiStats?.dailyTrend) {
+      const trend = aiStats.dailyTrend as AIDailyTrendPoint[]
       chartInstance.setOption({
         tooltip: { trigger: 'axis' },
         grid: { left: 40, right: 20, top: 20, bottom: 30 },
         xAxis: {
           type: 'category',
-          data: trend.map((item: any) => item.date?.slice(5) || ''),
+          data: trend.map((item) => item.date?.slice(5) || ''),
         },
         yAxis: { type: 'value' },
         series: [{
           name: '查询次数',
           type: 'bar',
-          data: trend.map((item: any) => item.count || 0),
+          data: trend.map((item) => item.count || 0),
           itemStyle: { color: '#18a058', borderRadius: [4, 4, 0, 0] },
         }],
       })
@@ -407,36 +475,51 @@ onMounted(() => {
   loadNotices()
   loadContribution()
   nextTick(() => initChart())
+  resizeHandler = () => chartInstance?.resize?.()
+  window.addEventListener('resize', resizeHandler)
 })
 
 onUnmounted(() => {
+  if (resizeHandler) {
+    window.removeEventListener('resize', resizeHandler)
+  }
   if (chartInstance) chartInstance.dispose?.()
 })
 
 async function loadContribution() {
   try {
     // 获取收藏数
-    const favRes: any = await interactionApi.getMyFavorites()
+    const favRes = await interactionApi.getMyFavorites()
     contributionStats.favorites = favRes.data?.length || 0
   } catch { /* ignore */ }
   try {
     // 获取创建的文档数
-    const docRes: any = await documentApi.list({ pageSize: 1 })
+    const docRes = await documentApi.list({ pageSize: 1 })
     contributionStats.createdDocs = docRes.data?.total || 0
   } catch { /* ignore */ }
   try {
     // 获取问答数
-    const queryRes: any = await ragApi.getSessionHistory({ pageSize: 1 })
+    const queryRes = await ragApi.getSessionHistory({ pageSize: 1 })
     contributionStats.queries = queryRes.data?.total || 0
   } catch { /* ignore */ }
-  // 活跃天数根据本地存储模拟
-  const lastActive = localStorage.getItem('lastActiveDate')
-  if (lastActive) {
-    const diff = Math.floor((Date.now() - new Date(lastActive).getTime()) / 86400000)
-    contributionStats.activeDays = diff < 2 ? (parseInt(localStorage.getItem('activeDays') || '1')) : 1
+  const today = new Date().toISOString().slice(0, 10)
+  const lastActiveDate = localStorage.getItem('lastActiveDate')
+  const storedDays = Number.parseInt(localStorage.getItem('activeDays') || '0', 10)
+
+  if (lastActiveDate === today) {
+    contributionStats.activeDays = Math.max(storedDays, 1)
+    return
   }
-  localStorage.setItem('lastActiveDate', new Date().toISOString())
-  localStorage.setItem('activeDays', String(contributionStats.activeDays + 1))
+
+  if (lastActiveDate) {
+    const diff = Math.floor((Date.parse(today) - Date.parse(lastActiveDate)) / 86400000)
+    contributionStats.activeDays = diff === 1 ? Math.max(storedDays + 1, 1) : 1
+  } else {
+    contributionStats.activeDays = 1
+  }
+
+  localStorage.setItem('lastActiveDate', today)
+  localStorage.setItem('activeDays', String(contributionStats.activeDays))
 }
 </script>
 

@@ -102,10 +102,32 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref } from 'vue'
 import { useMessage } from 'naive-ui'
 import { PlayOutline, TrashOutline, CopyOutline } from '@vicons/ionicons5'
 import { sandboxApi } from '@/api'
+import type { SandboxExecuteDTO } from '@/types/api'
+
+type SandboxLanguage = SandboxExecuteDTO['language']
+
+interface LanguageOption {
+  label: string
+  value: SandboxLanguage
+}
+
+interface CodeTemplate {
+  name: string
+  language: SandboxLanguage
+  code: string
+}
+
+interface HistoryItem {
+  code: string
+  output: string
+  success: boolean
+  time: Date
+  executionTime: number
+}
 
 const message = useMessage()
 
@@ -126,21 +148,21 @@ print("斐波那契数列:", result)
 print("总和:", sum(result))
 `)
 
-const language = ref('python')
+const language = ref<SandboxLanguage>('python')
 const running = ref(false)
 const output = ref('')
 const executionTime = ref(0)
 const hasError = ref(false)
 
 // 语言选项
-const languageOptions = [
+const languageOptions: LanguageOption[] = [
   { label: 'Python', value: 'python' },
   { label: 'JavaScript', value: 'javascript' },
   { label: 'Bash', value: 'bash' },
 ]
 
 // 代码模板
-const codeTemplates = [
+const codeTemplates: CodeTemplate[] = [
   {
     name: '斐波那契',
     language: 'python',
@@ -194,7 +216,14 @@ print(f"一周后: {future.strftime('%Y-%m-%d')}")`,
 ]
 
 // 执行历史
-const history = reactive<any[]>([])
+const history = ref<HistoryItem[]>([])
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+  return fallback
+}
 
 // 运行代码
 async function handleRun() {
@@ -209,36 +238,30 @@ async function handleRun() {
   const startTime = Date.now()
 
   try {
-    const res: any = await sandboxApi.execute({
+    const res = await sandboxApi.execute({
       code: code.value,
       language: language.value,
     })
 
     executionTime.value = Date.now() - startTime
 
-    if (res.code === 200) {
-      output.value = res.data?.output || '执行成功，无输出'
-      hasError.value = false
+    output.value = res.data?.output || res.data?.error || '执行成功，无输出'
+    hasError.value = Boolean(res.data?.error)
 
-      // 添加到历史
-      history.unshift({
-        code: code.value,
-        output: output.value,
-        success: true,
-        time: new Date(),
-        executionTime: executionTime.value,
-      })
-    } else {
-      output.value = res.message || '执行失败'
-      hasError.value = true
-    }
-  } catch (error: any) {
+    history.value.unshift({
+      code: code.value,
+      output: output.value,
+      success: !hasError.value,
+      time: new Date(),
+      executionTime: executionTime.value,
+    })
+  } catch (error: unknown) {
     executionTime.value = Date.now() - startTime
-    output.value = error.message || '执行出错'
+    output.value = getErrorMessage(error, '执行出错')
     hasError.value = true
 
     // 添加到历史
-    history.unshift({
+    history.value.unshift({
       code: code.value,
       output: output.value,
       success: false,
@@ -248,8 +271,8 @@ async function handleRun() {
   } finally {
     running.value = false
     // 限制历史记录数量
-    if (history.length > 10) {
-      history.pop()
+    if (history.value.length > 10) {
+      history.value.pop()
     }
   }
 }
@@ -262,14 +285,14 @@ function handleClear() {
 }
 
 // 加载模板
-function loadTemplate(template: any) {
+function loadTemplate(template: CodeTemplate) {
   language.value = template.language
   code.value = template.code
   message.success(`已加载模板: ${template.name}`)
 }
 
 // 加载历史记录
-function loadHistory(item: any) {
+function loadHistory(item: HistoryItem) {
   code.value = item.code
   message.success('已加载历史代码')
 }

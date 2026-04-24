@@ -494,17 +494,17 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   name: rag-wiki-config
-                  key: nacos-addr
+                  key: nacos.server-addr
             - name: MYSQL_HOST
               valueFrom:
                 configMapKeyRef:
                   name: rag-wiki-config
-                  key: mysql-host
+                  key: mysql.host
             - name: REDIS_HOST
               valueFrom:
                 configMapKeyRef:
                   name: rag-wiki-config
-                  key: redis-host
+                  key: redis.host
           resources:
             requests:
               memory: "256Mi"
@@ -563,17 +563,17 @@ spec:
               valueFrom:
                 configMapKeyRef:
                   name: rag-wiki-config
-                  key: nacos-addr
+                  key: nacos.server-addr
             - name: MYSQL_HOST
               valueFrom:
                 configMapKeyRef:
                   name: rag-wiki-config
-                  key: mysql-host
+                  key: mysql.host
             - name: REDIS_HOST
               valueFrom:
                 configMapKeyRef:
                   name: rag-wiki-config
-                  key: redis-host
+                  key: redis.host
           resources:
             requests:
               memory: "256Mi"

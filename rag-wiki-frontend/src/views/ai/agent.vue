@@ -187,30 +187,47 @@ import { useMessage } from 'naive-ui'
 import { AddOutline } from '@vicons/ionicons5'
 import { agentApi, spaceApi } from '@/api'
 import { sanitizeHTML } from '@/utils/sanitize'
+import type { AgentSubmitDTO, AgentTaskStatus, AgentTaskStepStatus, AgentTaskVO, SpaceVO } from '@/types/api'
+
+interface SpaceOption {
+  label: string
+  value: string
+}
+
+interface NewTaskForm extends AgentSubmitDTO {
+  spaces: string[]
+  tools: string[]
+}
 
 const message = useMessage()
 
 // 任务列表
-const taskList = ref<any[]>([])
-const currentTask = ref<any>(null)
-const loading = ref(false)
+const taskList = ref<AgentTaskVO[]>([])
+const currentTask = ref<AgentTaskVO | null>(null)
 let refreshTimer: number | null = null
 
 // 新建任务弹窗
 const newTaskVisible = ref(false)
 const submitLoading = ref(false)
-const spaceOptions = ref<{ label: string; value: string }[]>([])
+const spaceOptions = ref<SpaceOption[]>([])
 
-const newTaskForm = reactive({
+const newTaskForm = reactive<NewTaskForm>({
   query: '',
   depth: 'standard',
-  spaces: [] as string[],
+  spaces: [],
   tools: ['search', 'web'],
 })
 
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+  return fallback
+}
+
 // 状态映射
-function getStatusLabel(status: string): string {
-  const map: Record<string, string> = {
+function getStatusLabel(status: AgentTaskStatus): string {
+  const map: Record<AgentTaskStatus, string> = {
     PENDING: '待执行',
     RUNNING: '执行中',
     COMPLETED: '已完成',
@@ -220,8 +237,8 @@ function getStatusLabel(status: string): string {
   return map[status] || status
 }
 
-function getStatusType(status: string): string {
-  const map: Record<string, string> = {
+function getStatusType(status: AgentTaskStatus): string {
+  const map: Record<AgentTaskStatus, string> = {
     PENDING: 'default',
     RUNNING: 'warning',
     COMPLETED: 'success',
@@ -231,8 +248,8 @@ function getStatusType(status: string): string {
   return map[status] || 'default'
 }
 
-function getStepType(status: string): string {
-  const map: Record<string, string> = {
+function getStepType(status: AgentTaskStepStatus): string {
+  const map: Record<AgentTaskStepStatus, string> = {
     pending: 'default',
     running: 'warning',
     completed: 'success',
@@ -322,20 +339,18 @@ async function loadTasks() {
 // 加载知识库选项
 async function loadSpaces() {
   try {
-    const res: any = await spaceApi.list({ pageSize: 100 })
-    if (res.code === 200) {
-      spaceOptions.value = (res.data?.records || []).map((s: any) => ({
-        label: s.spaceName,
-        value: s.spaceId,
-      }))
-    }
-  } catch (error) {
+    const res = await spaceApi.list({ pageSize: 100 })
+    spaceOptions.value = (res.data?.records || []).map((space: SpaceVO) => ({
+      label: space.spaceName,
+      value: space.spaceId,
+    }))
+  } catch (error: unknown) {
     console.error('加载知识库失败', error)
   }
 }
 
 // 选择任务
-function handleSelectTask(task: any) {
+function handleSelectTask(task: AgentTaskVO) {
   currentTask.value = task
 }
 
@@ -357,46 +372,45 @@ async function handleSubmitTask() {
 
   submitLoading.value = true
   try {
-    const res: any = await agentApi.submit({
+    const res = await agentApi.submit({
       query: newTaskForm.query,
       depth: newTaskForm.depth,
       spaces: newTaskForm.spaces,
       tools: newTaskForm.tools,
     })
 
-    if (res.code === 200) {
-      message.success('任务已提交')
-      newTaskVisible.value = false
-      // 添加到列表
-      taskList.value.unshift({
-        taskId: res.data.taskId,
-        title: newTaskForm.query.slice(0, 20) + '...',
-        query: newTaskForm.query,
-        status: 'PENDING',
-        progress: 0,
-        createdAt: new Date().toISOString(),
-        steps: [],
-      })
-      // 开始轮询状态
-      startRefreshTimer()
+    message.success('任务已提交')
+    newTaskVisible.value = false
+    const createdTask: AgentTaskVO = {
+      taskId: res.data.taskId,
+      title: res.data.title || `${newTaskForm.query.slice(0, 20)}...`,
+      query: res.data.query || newTaskForm.query,
+      status: res.data.status || 'PENDING',
+      progress: res.data.progress || 0,
+      createdAt: res.data.createdAt || new Date().toISOString(),
+      steps: res.data.steps || [],
+      completedAt: res.data.completedAt,
+      result: res.data.result,
+      sources: res.data.sources,
     }
-  } catch (error) {
-    message.error('提交失败')
+    taskList.value.unshift(createdTask)
+    currentTask.value = createdTask
+    startRefreshTimer()
+  } catch (error: unknown) {
+    message.error(getErrorMessage(error, '提交失败'))
   } finally {
     submitLoading.value = false
   }
 }
 
 // 取消任务
-async function handleCancel(task: any) {
+async function handleCancel(task: AgentTaskVO) {
   try {
-    const res: any = await agentApi.cancel(task.taskId)
-    if (res.code === 200) {
-      message.success('任务已取消')
-      task.status = 'CANCELLED'
-    }
-  } catch (error) {
-    message.error('取消失败')
+    await agentApi.cancel(task.taskId)
+    message.success('任务已取消')
+    task.status = 'CANCELLED'
+  } catch (error: unknown) {
+    message.error(getErrorMessage(error, '取消失败'))
   }
 }
 
@@ -405,11 +419,12 @@ async function refreshTaskStatus() {
   const runningTasks = taskList.value.filter(t => t.status === 'RUNNING' || t.status === 'PENDING')
   for (const task of runningTasks) {
     try {
-      const res: any = await agentApi.getTask(task.taskId)
-      if (res.code === 200) {
-        Object.assign(task, res.data)
+      const res = await agentApi.getTask(task.taskId)
+      Object.assign(task, res.data)
+      if (currentTask.value?.taskId === task.taskId) {
+        currentTask.value = task
       }
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('刷新任务状态失败', error)
     }
   }
@@ -430,8 +445,8 @@ function stopRefreshTimer() {
 }
 
 onMounted(() => {
-  loadTasks()
-  loadSpaces()
+  void loadTasks()
+  void loadSpaces()
   startRefreshTimer()
 })
 

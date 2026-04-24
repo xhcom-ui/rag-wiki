@@ -73,15 +73,60 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted, h } from 'vue'
-import { useMessage, NTag, NButton, NSpace } from 'naive-ui'
+import { useMessage, NTag, NButton, NSpace, type DataTableColumns } from 'naive-ui'
+
+type AlertSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'
+type AlertStatus = 'NEW' | 'CONFIRMED' | 'PROCESSING' | 'RESOLVED' | 'IGNORED'
+type AlertType =
+  | 'HIGH_FREQUENCY'
+  | 'UNAUTHORIZED_ACCESS'
+  | 'OFF_HOURS_ACCESS'
+  | 'SQL_INJECTION'
+  | 'SENSITIVE_DOC_ACCESS'
+  | 'CROSS_DEPT_ACCESS'
+
+interface SecurityAlert {
+  alertId: string
+  alertType: AlertType | string
+  severity: AlertSeverity
+  title: string
+  sourceIp?: string
+  userId?: string
+  status: AlertStatus
+  createdAt: string
+}
+
+interface AlertCountBySeverity {
+  severity: AlertSeverity
+  count: number
+}
+
+interface AlertCountByStatus {
+  status: AlertStatus
+  count: number
+}
+
+interface SecurityAlertStats {
+  unhandledCount?: number
+  todayNew?: number
+  bySeverity: AlertCountBySeverity[]
+  byStatus: AlertCountByStatus[]
+}
 
 const message = useMessage()
 const loading = ref(false)
-const alertList = ref([])
+const alertList = ref<SecurityAlert[]>([])
 const showHandleModal = ref(false)
 
-const stats = ref<any>({})
-const searchForm = reactive({ severity: null, status: null, alertType: null })
+const stats = ref<SecurityAlertStats>({
+  bySeverity: [],
+  byStatus: [],
+})
+const searchForm = reactive<{
+  severity: AlertSeverity | null
+  status: AlertStatus | null
+  alertType: AlertType | null
+}>({ severity: null, status: null, alertType: null })
 const handleForm = reactive({ alertId: '', newStatus: 'RESOLVED', handleResult: '' })
 
 const pagination = reactive({ page: 1, pageSize: 20, itemCount: 0 })
@@ -113,27 +158,57 @@ const handleStatusOptions = [
   { label: '已忽略', value: 'IGNORED' },
 ]
 
-const severityColorMap: Record<string, string> = { CRITICAL: 'error', HIGH: 'warning', MEDIUM: 'info', LOW: 'default' }
+const severityColorMap: Record<AlertSeverity, 'error' | 'warning' | 'info' | 'default'> = {
+  CRITICAL: 'error',
+  HIGH: 'warning',
+  MEDIUM: 'info',
+  LOW: 'default',
+}
 
-const columns = [
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+  return fallback
+}
+
+const columns: DataTableColumns<SecurityAlert> = [
   { title: '告警类型', key: 'alertType', width: 140 },
-  { title: '严重程度', key: 'severity', width: 100, render: (row: any) => h(NTag, { type: severityColorMap[row.severity] || 'default', size: 'small' }, { default: () => row.severity }) },
+  {
+    title: '严重程度',
+    key: 'severity',
+    width: 100,
+    render: (row: SecurityAlert) =>
+      h(NTag, { type: severityColorMap[row.severity] || 'default', size: 'small' }, { default: () => row.severity }),
+  },
   { title: '标题', key: 'title', ellipsis: { tooltip: true } },
   { title: '来源IP', key: 'sourceIp', width: 130 },
   { title: '用户', key: 'userId', width: 100 },
-  { title: '状态', key: 'status', width: 90, render: (row: any) => h(NTag, { type: row.status === 'NEW' ? 'error' : row.status === 'RESOLVED' ? 'success' : 'warning', size: 'small' }, { default: () => row.status }) },
+  {
+    title: '状态',
+    key: 'status',
+    width: 90,
+    render: (row: SecurityAlert) =>
+      h(NTag, { type: row.status === 'NEW' ? 'error' : row.status === 'RESOLVED' ? 'success' : 'warning', size: 'small' }, { default: () => row.status }),
+  },
   { title: '时间', key: 'createdAt', width: 170 },
-  { title: '操作', key: 'actions', width: 100, render: (row: any) => row.status === 'NEW' || row.status === 'CONFIRMED' ? h(NButton, { type: 'primary', size: 'small', onClick: () => openHandleModal(row) }, { default: () => '处理' }) : null },
+  {
+    title: '操作',
+    key: 'actions',
+    width: 100,
+    render: (row: SecurityAlert) =>
+      row.status === 'NEW' || row.status === 'CONFIRMED'
+        ? h(NButton, { type: 'primary', size: 'small', onClick: () => openHandleModal(row) }, { default: () => '处理' })
+        : null,
+  },
 ]
 
-const severityCount = (sev: string) => {
-  const list = stats.value.bySeverity || []
-  const item = list.find((m: any) => m.severity === sev)
+const severityCount = (sev: AlertSeverity) => {
+  const item = stats.value.bySeverity.find((entry: AlertCountBySeverity) => entry.severity === sev)
   return item ? item.count : 0
 }
-const statusCount = (st: string) => {
-  const list = stats.value.byStatus || []
-  const item = list.find((m: any) => m.status === st)
+const statusCount = (st: AlertStatus) => {
+  const item = stats.value.byStatus.find((entry: AlertCountByStatus) => entry.status === st)
   return item ? item.count : 0
 }
 
@@ -144,8 +219,8 @@ const loadData = async () => {
     // alertList.value = res.data.records
     // pagination.itemCount = res.data.total
     // stats.value = (await securityAlertApi.getStats()).data
-  } catch (e: any) {
-    message.error('加载失败: ' + e.message)
+  } catch (error: unknown) {
+    message.error(`加载失败: ${getErrorMessage(error, '未知错误')}`)
   } finally {
     loading.value = false
   }
@@ -154,13 +229,15 @@ const loadData = async () => {
 const handleSearch = () => { pagination.page = 1; loadData() }
 const handleReset = () => { Object.assign(searchForm, { severity: null, status: null, alertType: null }); loadData() }
 const handlePageChange = (page: number) => { pagination.page = page; loadData() }
-const openHandleModal = (row: any) => { handleForm.alertId = row.alertId; showHandleModal.value = true }
+const openHandleModal = (row: SecurityAlert) => { handleForm.alertId = row.alertId; showHandleModal.value = true }
 const handleAlert = async () => {
   try {
     // await securityAlertApi.handle(handleForm.alertId, handleForm)
     message.success('处理成功')
     loadData()
-  } catch (e: any) { message.error('处理失败: ' + e.message) }
+  } catch (error: unknown) {
+    message.error(`处理失败: ${getErrorMessage(error, '未知错误')}`)
+  }
 }
 
 onMounted(() => { loadData() })

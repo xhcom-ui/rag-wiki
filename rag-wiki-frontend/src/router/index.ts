@@ -167,39 +167,43 @@ const router = createRouter({
   routes,
 })
 
+// 全局token验证状态
+let verifiedToken: string | null = null
+
 // 路由守卫
 router.beforeEach(async (to, _from, next) => {
   const token = localStorage.getItem('token')
-  
+
+  // 已登录用户访问登录页时直接回首页
+  if (to.name === 'Login' && token) {
+    next({ name: 'Dashboard' })
+    return
+  }
+
   // 不需要认证的路由直接放行
   if (to.meta.requiresAuth === false) {
     next()
     return
   }
-  
+
   // 没有token，跳转登录
   if (!token) {
+    verifiedToken = null
     next({ name: 'Login' })
     return
   }
-  
-  // 有token但访问登录页，跳转首页
-  if (to.name === 'Login') {
-    next({ name: 'Dashboard' })
-    return
-  }
-  
+
   // 验证token有效性（仅在首次加载或token刷新时）
-  if (!router.currentRoute.value.meta._tokenVerified) {
+  if (verifiedToken !== token) {
     try {
       await authApi.getCurrentUser()
-      // 标记token已验证
-      to.meta._tokenVerified = true
+      verifiedToken = token
       next()
     } catch (error) {
       // token无效或过期
       console.warn('[Router] Token验证失败，清除登录状态', error)
       localStorage.removeItem('token')
+      verifiedToken = null
       next({ name: 'Login' })
     }
   } else {

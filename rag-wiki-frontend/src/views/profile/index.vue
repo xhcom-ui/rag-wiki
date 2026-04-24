@@ -14,11 +14,11 @@
             <n-descriptions-item label="部门">{{ userInfo.deptName || '-' }}</n-descriptions-item>
             <n-descriptions-item label="角色">
               <n-space>
-                <n-tag v-for="role in userInfo.roles" :key="role" size="small">{{ role }}</n-tag>
+                <n-tag v-for="role in userInfo.roles" :key="typeof role === 'string' ? role : role.roleId" size="small">{{ formatRoleLabel(role) }}</n-tag>
               </n-space>
             </n-descriptions-item>
             <n-descriptions-item label="密级">
-              <n-tag size="small" :type="userInfo.securityLevel >= 3 ? 'warning' : 'default'">L{{ userInfo.securityLevel }}</n-tag>
+              <n-tag size="small" :type="resolvedSecurityLevel >= 3 ? 'warning' : 'default'">L{{ resolvedSecurityLevel }}</n-tag>
             </n-descriptions-item>
             <n-descriptions-item label="邮箱">{{ userInfo.email || '-' }}</n-descriptions-item>
             <n-descriptions-item label="手机">{{ userInfo.phone || '-' }}</n-descriptions-item>
@@ -96,7 +96,7 @@
           </n-tab-pane>
 
           <n-tab-pane name="sessions" tab="会话管理">
-            <n-data-table :columns="sessionColumns" :data="sessions" :loading="loadingSessions" :row-key="(row: any) => row.sessionId" />
+            <n-data-table :columns="sessionColumns" :data="sessions" :loading="loadingSessions" :row-key="(row: SessionRow) => row.sessionId" />
           </n-tab-pane>
 
           <n-tab-pane name="apikeys" tab="API密钥">
@@ -105,7 +105,7 @@
                 <n-text>管理您的API密钥，用于外部系统集成</n-text>
                 <n-button type="primary" size="small" @click="showCreateKeyModal = true">创建密钥</n-button>
               </n-space>
-              <n-data-table :columns="apiKeyColumns" :data="apiKeys" :loading="loadingApiKeys" :row-key="(row: any) => row.keyId" />
+              <n-data-table :columns="apiKeyColumns" :data="apiKeys" :loading="loadingApiKeys" :row-key="(row: ApiKeyVO) => row.keyId" />
             </n-space>
           </n-tab-pane>
 
@@ -117,7 +117,7 @@
                 <n-tab name="created">我创建的</n-tab>
               </n-tabs>
               <n-list hoverable clickable>
-                <n-list-item v-for="doc in myDocuments" :key="doc.documentId" @click="router.push('/knowledge/document')">
+                <n-list-item v-for="doc in myDocuments" :key="doc.documentId" @click="openDocument(doc)">
                   <n-thing :title="doc.documentName" :description="doc.spaceName ? '空间: ' + doc.spaceName : ''" />
                   <template #suffix>
                     <n-text depth="3" style="font-size: 12px">{{ doc.updatedAt || doc.createdAt }}</n-text>
@@ -165,10 +165,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, h } from 'vue'
+import { computed, ref, reactive, onMounted, h } from 'vue'
 import { useRouter } from 'vue-router'
 import { NButton, NSpace, NTag, useMessage, type DataTableColumns, type FormRules, type FormInst } from 'naive-ui'
 import { authApi, userApi, spaceApi, ragApi, apiKeyApi, interactionApi, documentApi } from '@/api'
+import type { ApiKeyVO, CurrentUserVO, DocumentVO, RoleInfo, SessionVO, SpaceVO } from '@/types/api'
 
 const router = useRouter()
 const message = useMessage()
@@ -177,8 +178,9 @@ const changingPwd = ref(false)
 const savingPrefs = ref(false)
 const loadingSessions = ref(false)
 const pwdFormRef = ref<FormInst | null>(null)
+type SessionRow = SessionVO & { lastActiveAt?: string }
 
-const userInfo = ref<any>({
+const userInfo = ref<Partial<CurrentUserVO>>({
   username: '',
   realName: '',
   deptName: '',
@@ -199,13 +201,14 @@ const preferences = reactive({
   notifyOnApproval: true,
 })
 
-const spaceOptions = ref<any[]>([])
+const spaceOptions = ref<Array<{ label: string; value: string }>>([])
 const modelOptions = [
   { label: 'GPT-4', value: 'gpt-4' },
   { label: 'GPT-3.5', value: 'gpt-3.5-turbo' },
   { label: 'GLM-4', value: 'glm-4' },
 ]
-const sessions = ref<any[]>([])
+const sessions = ref<SessionRow[]>([])
+const resolvedSecurityLevel = computed(() => userInfo.value.securityLevel ?? 1)
 
 const passwordRules: FormRules = {
   oldPassword: [{ required: true, message: '请输入当前密码' }],
@@ -219,45 +222,44 @@ const passwordRules: FormRules = {
   ],
 }
 
-const sessionColumns: DataTableColumns = [
+const sessionColumns: DataTableColumns<SessionRow> = [
   { title: '会话ID', key: 'sessionId', width: 120, ellipsis: { tooltip: true } },
-  { title: '类型', key: 'type', width: 100, render: (row: any) => row.type === 'chat' ? '智能问答' : '深度研究' },
+  { title: '类型', key: 'type', width: 100, render: (row) => row.type === 'chat' ? '智能问答' : '深度研究' },
   { title: '消息数', key: 'messageCount', width: 80 },
   { title: '创建时间', key: 'createdAt', width: 170 },
   { title: '最后活动', key: 'lastActiveAt', width: 170 },
   {
     title: '操作', key: 'actions', width: 100,
-    render: (row: any) => h(NButton, { size: 'small', type: 'error', onClick: () => handleClearSession(row) }, () => '清除'),
+    render: (row) => h(NButton, { size: 'small', type: 'error', onClick: () => handleClearSession(row) }, () => '清除'),
   },
 ]
 
 async function loadUserInfo() {
   try {
-    const res: any = await authApi.getCurrentUser()
+    const res = await authApi.getCurrentUser()
     userInfo.value = res.data || {}
     Object.assign(basicForm, {
       realName: res.data?.realName || '',
       email: res.data?.email || '',
       phone: res.data?.phone || '',
     })
-  } catch (e: any) {
-    message.error(e.message || '加载失败')
+  } catch (error: unknown) {
+    message.error(error instanceof Error ? error.message : '加载失败')
   }
 }
 
 async function loadSpaces() {
   try {
-    const res: any = await spaceApi.list({ pageSize: 100 })
-    spaceOptions.value = (res.data?.records || []).map((s: any) => ({ label: s.spaceName, value: s.spaceId }))
+    const res = await spaceApi.list({ pageSize: 100 })
+    spaceOptions.value = (res.data?.records || []).map((s: SpaceVO) => ({ label: s.spaceName, value: s.spaceId }))
   } catch { /* ignore */ }
 }
 
 async function loadSessions() {
   loadingSessions.value = true
   try {
-    // 调用会话管理API
-    const res: any = await ragApi.getSessionHistory({ pageSize: 50 })
-    sessions.value = (res.data?.records || []).map((s: any) => ({
+    const res = await ragApi.getSessionHistory({ pageSize: 50 })
+    sessions.value = (res.data?.records || []).map((s: SessionVO): SessionRow => ({
       sessionId: s.sessionId,
       type: s.type || 'chat',
       messageCount: s.messageCount || (s.messages?.length || 0),
@@ -275,11 +277,11 @@ async function loadSessions() {
 async function handleSaveBasic() {
   saving.value = true
   try {
-    await userApi.update({ ...basicForm, id: userInfo.value.id })
+    await userApi.update({ ...basicForm, userId: userInfo.value.userId })
     message.success('保存成功')
-    loadUserInfo()
-  } catch (e: any) {
-    message.error(e.message || '保存失败')
+    await loadUserInfo()
+  } catch (error: unknown) {
+    message.error(error instanceof Error ? error.message : '保存失败')
   } finally {
     saving.value = false
   }
@@ -298,8 +300,8 @@ async function handleChangePassword() {
     setTimeout(() => {
       router.push('/login')
     }, 1500)
-  } catch (e: any) {
-    message.error(e.message || '修改失败')
+  } catch (error: unknown) {
+    message.error(error instanceof Error ? error.message : '修改失败')
   } finally {
     changingPwd.value = false
   }
@@ -315,12 +317,14 @@ async function handleSavePreferences() {
   }
 }
 
-async function handleClearSession(row: any) {
+async function handleClearSession(row: SessionVO) {
   try {
+    if (!row.sessionId) return
+    await ragApi.clearSession(row.sessionId)
     message.success('会话已清除')
-    loadSessions()
-  } catch (e: any) {
-    message.error(e.message || '清除失败')
+    await loadSessions()
+  } catch (error: unknown) {
+    message.error(error instanceof Error ? error.message : '清除失败')
   }
 }
 
@@ -330,19 +334,19 @@ const showKeyResultModal = ref(false)
 const creatingKey = ref(false)
 const loadingApiKeys = ref(false)
 const newKeyValue = ref('')
-const apiKeys = ref<any[]>([])
+const apiKeys = ref<ApiKeyVO[]>([])
 const newKeyForm = reactive({ keyName: '', rateLimit: 30 })
 
-const apiKeyColumns: DataTableColumns = [
+const apiKeyColumns: DataTableColumns<ApiKeyVO> = [
   { title: '名称', key: 'keyName', width: 150 },
-  { title: '密钥', key: 'keyPrefix', width: 160, render: (row: any) => h('code', { style: 'font-size:12px' }, row.keyPrefix) },
-  { title: '状态', key: 'isEnabled', width: 80, render: (row: any) => h(NTag, { size: 'small', type: row.isEnabled ? 'success' : 'default' }, () => row.isEnabled ? '启用' : '禁用') },
+  { title: '密钥', key: 'keyPrefix', width: 160, render: (row) => h('code', { style: 'font-size:12px' }, row.keyPrefix || '-') },
+  { title: '状态', key: 'isEnabled', width: 80, render: (row) => h(NTag, { size: 'small', type: row.isEnabled ? 'success' : 'default' }, () => row.isEnabled ? '启用' : '禁用') },
   { title: 'QPS限制', key: 'rateLimit', width: 80 },
   { title: '创建时间', key: 'createdAt', width: 160 },
-  { title: '最后使用', key: 'lastUsedAt', width: 160, render: (row: any) => row.lastUsedAt || '未使用' },
+  { title: '最后使用', key: 'lastUsedAt', width: 160, render: (row) => row.lastUsedAt || '未使用' },
   {
     title: '操作', key: 'actions', width: 150,
-    render: (row: any) => h(NSpace, null, () => [
+    render: (row) => h(NSpace, null, () => [
       h(NButton, { size: 'small', onClick: () => handleToggleApiKey(row) }, () => row.isEnabled ? '禁用' : '启用'),
       h(NButton, { size: 'small', type: 'error', onClick: () => handleRevokeApiKey(row) }, () => '吊销'),
     ]),
@@ -352,7 +356,7 @@ const apiKeyColumns: DataTableColumns = [
 async function loadApiKeys() {
   loadingApiKeys.value = true
   try {
-    const res: any = await apiKeyApi.list()
+    const res = await apiKeyApi.list()
     apiKeys.value = res.data || []
   } catch {
     apiKeys.value = []
@@ -365,36 +369,36 @@ async function handleCreateApiKey() {
   if (!newKeyForm.keyName) { message.warning('请输入密钥名称'); return }
   creatingKey.value = true
   try {
-    const res: any = await apiKeyApi.create(newKeyForm)
+    const res = await apiKeyApi.create(newKeyForm)
     newKeyValue.value = res.data?.apiKey || ''
     showCreateKeyModal.value = false
     showKeyResultModal.value = true
     newKeyForm.keyName = ''
     loadApiKeys()
-  } catch (e: any) {
-    message.error(e.message || '创建失败')
+  } catch (error: unknown) {
+    message.error(error instanceof Error ? error.message : '创建失败')
   } finally {
     creatingKey.value = false
   }
 }
 
-async function handleRevokeApiKey(row: any) {
+async function handleRevokeApiKey(row: ApiKeyVO) {
   try {
     await apiKeyApi.revoke(row.keyId)
     message.success('密钥已吊销')
     loadApiKeys()
-  } catch (e: any) {
-    message.error(e.message || '操作失败')
+  } catch (error: unknown) {
+    message.error(error instanceof Error ? error.message : '操作失败')
   }
 }
 
-async function handleToggleApiKey(row: any) {
+async function handleToggleApiKey(row: ApiKeyVO) {
   try {
     await apiKeyApi.toggle(row.keyId, !row.isEnabled)
     message.success(row.isEnabled ? '已禁用' : '已启用')
     loadApiKeys()
-  } catch (e: any) {
-    message.error(e.message || '操作失败')
+  } catch (error: unknown) {
+    message.error(error instanceof Error ? error.message : '操作失败')
   }
 }
 
@@ -403,8 +407,17 @@ function copyApiKey() {
   message.success('已复制到剪贴板')
 }
 
+function openDocument(doc: Partial<DocumentVO>) {
+  const documentId = doc.documentId || doc.id
+  if (!documentId) {
+    message.warning('未找到文档ID')
+    return
+  }
+  router.push(`/document/${documentId}`)
+}
+
 // ==================== 我的文档 ====================
-const myDocuments = ref<any[]>([])
+const myDocuments = ref<Array<Partial<DocumentVO>>>([])
 const currentMyDocTab = ref('favorites')
 
 async function handleMyDocTab(tab: string) {
@@ -416,18 +429,23 @@ async function loadMyDocuments(tab?: string) {
   const tabName = tab || currentMyDocTab.value
   try {
     if (tabName === 'favorites') {
-      const res: any = await interactionApi.getMyFavorites()
+      const res = await interactionApi.getMyFavorites()
       myDocuments.value = res.data || []
     } else if (tabName === 'history') {
-      const res: any = await interactionApi.getBrowseHistory(20)
+      const res = await interactionApi.getBrowseHistory(20)
       myDocuments.value = res.data || []
     } else {
-      const res: any = await documentApi.list({ pageSize: 20 })
-      myDocuments.value = (res.data?.records || []).filter((d: any) => d.creatorId === userInfo.value.userId)
+      const res = await documentApi.list({ pageSize: 20 })
+      myDocuments.value = (res.data?.records || []).filter((d: DocumentVO) => d.creatorId === userInfo.value.userId)
     }
   } catch {
     myDocuments.value = []
   }
+}
+
+function formatRoleLabel(role: string | RoleInfo) {
+  if (typeof role === 'string') return role
+  return role.roleName || role.roleCode || role.roleId
 }
 
 onMounted(() => {

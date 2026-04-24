@@ -106,8 +106,39 @@
 import { ref, computed } from 'vue'
 import { useMessage } from 'naive-ui'
 
+type ComponentType =
+  | 'TEXT'
+  | 'SELECT'
+  | 'DATE'
+  | 'RADIO'
+  | 'CHECKBOX'
+  | 'TEXTAREA'
+  | 'NUMBER'
+  | 'FILE'
+  | 'TABLE'
+  | 'CHART'
+  | 'LLM'
+  | 'KNOWLEDGE'
+
+interface ComponentOption {
+  label: string
+  value: string
+}
+
+interface LowcodeComponent {
+  id: string
+  type: ComponentType
+  fieldKey: string
+  label: string
+  placeholder: string
+  required: boolean
+  options: ComponentOption[]
+  systemPrompt?: string
+  spaceId?: string
+}
+
 const message = useMessage()
-const components = ref<any[]>([])
+const components = ref<LowcodeComponent[]>([])
 const selectedId = ref('')
 let counter = 0
 
@@ -116,7 +147,7 @@ const selectedComponent = computed(() => {
 })
 
 const optionTags = computed({
-  get: () => (selectedComponent.value?.options || []).map((o: any) => o.label),
+  get: () => (selectedComponent.value?.options || []).map((option: ComponentOption) => option.label),
   set: (vals: string[]) => {
     if (selectedComponent.value) {
       selectedComponent.value.options = vals.map(v => ({ label: v, value: v }))
@@ -124,16 +155,18 @@ const optionTags = computed({
   }
 })
 
-function addComponent(type: string) {
+function addComponent(type: ComponentType) {
   counter++
-  const comp: any = {
+  const comp: LowcodeComponent = {
     id: `comp_${counter}`,
     type,
     fieldKey: `field_${counter}`,
     label: getLabel(type),
     placeholder: `请输入${getLabel(type)}`,
     required: false,
-    options: type === 'RADIO' ? [{ label: '选项1', value: 'opt1' }, { label: '选项2', value: 'opt2' }] : [],
+    options: ['RADIO', 'CHECKBOX', 'SELECT'].includes(type)
+      ? [{ label: '选项1', value: 'opt1' }, { label: '选项2', value: 'opt2' }]
+      : [],
   }
   components.value.push(comp)
   selectedId.value = comp.id
@@ -144,8 +177,8 @@ function removeComponent(index: number) {
   selectedId.value = ''
 }
 
-function getLabel(type: string): string {
-  const labels: Record<string, string> = {
+function getLabel(type: ComponentType): string {
+  const labels: Record<ComponentType, string> = {
     TEXT: '文本输入', SELECT: '下拉选择', DATE: '日期选择',
     RADIO: '单选框', CHECKBOX: '多选框', TEXTAREA: '多行文本',
     NUMBER: '数字输入', FILE: '文件上传', TABLE: '数据表格',
@@ -159,7 +192,6 @@ function handlePreview() {
 }
 
 function handleSave() {
-  const config = JSON.stringify(components.value, null, 2)
   message.success(`保存成功，共 ${components.value.length} 个组件`)
 }
 </script>

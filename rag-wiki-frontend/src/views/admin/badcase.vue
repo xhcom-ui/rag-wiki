@@ -20,7 +20,7 @@
         <div class="stat-label">处理中</div>
         <div class="stat-value">{{ stats.processing || 0 }}</div>
         <div class="stat-footer">
-          <n-icon :component="TimeOutlined" />
+          <n-icon :component="ClockCircleOutlined" />
           <span>正在分析</span>
         </div>
       </div>
@@ -29,7 +29,7 @@
         <div class="stat-label">已解决</div>
         <div class="stat-value">{{ stats.resolved || 0 }}</div>
         <div class="stat-footer">
-          <n-icon :component="CheckmarkCircleOutlined" />
+          <n-icon :component="CheckCircleOutlined" />
           <span>已完成</span>
         </div>
       </div>
@@ -38,7 +38,7 @@
         <div class="stat-label">本周新增</div>
         <div class="stat-value">{{ stats.weeklyNew || 0 }}</div>
         <div class="stat-footer">
-          <n-icon :component="AddCircleOutlined" />
+          <n-icon :component="PlusOutlined" />
           <span>近7天</span>
         </div>
       </div>
@@ -177,14 +177,47 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted, h } from 'vue'
-import { useMessage } from 'naive-ui'
+import { NButton, NSpace, NTag, useMessage, type DataTableColumns, type FormInst } from 'naive-ui'
 import {
   WarningOutlined,
-  TimeOutlined,
-  CheckmarkCircleOutlined,
-  AddCircleOutlined,
+  ClockCircleOutlined,
+  CheckCircleOutlined,
+  PlusOutlined,
 } from '@vicons/antd'
 import { badcaseApi } from '@/api'
+
+type TagType = 'default' | 'primary' | 'info' | 'success' | 'warning' | 'error'
+
+interface BadcaseRow {
+  id: number
+  sessionId?: string
+  query?: string
+  answer?: string
+  description?: string
+  severity: string
+  status: string
+  resolution?: string
+  improvement?: string
+  createdAt?: string
+}
+
+interface BadcaseStats {
+  pending?: number
+  processing?: number
+  resolved?: number
+  weeklyNew?: number
+}
+
+interface BadcasePageResult {
+  records?: BadcaseRow[]
+  total?: number
+}
+
+interface BadcaseProcessForm {
+  status: string
+  resolution: string
+  improvement: string
+}
 
 const message = useMessage()
 
@@ -220,7 +253,7 @@ const stats = reactive({
 })
 
 // 表格数据
-const tableData = ref<any[]>([])
+const tableData = ref<BadcaseRow[]>([])
 const loading = ref(false)
 const pagination = reactive({
   page: 1,
@@ -233,10 +266,10 @@ const pagination = reactive({
 // 处理弹窗
 const processVisible = ref(false)
 const submitLoading = ref(false)
-const formRef = ref<any>(null)
-const currentBadcase = ref<any>(null)
+const formRef = ref<FormInst | null>(null)
+const currentBadcase = ref<BadcaseRow | null>(null)
 
-const processForm = reactive({
+const processForm = reactive<BadcaseProcessForm>({
   status: 'PROCESSING',
   resolution: '',
   improvement: '',
@@ -251,59 +284,59 @@ const formRules = {
 const detailVisible = ref(false)
 
 // 获取严重程度标签
-function getSeverityLabel(severity: string): string {
+function getSeverityLabel(severity?: string | null): string {
   const map: Record<string, string> = {
     CRITICAL: '严重',
     HIGH: '高',
     MEDIUM: '中',
     LOW: '低',
   }
-  return map[severity] || severity
+  return map[severity || ''] || severity || '-'
 }
 
 // 获取严重程度类型
-function getSeverityType(severity: string): string {
-  const map: Record<string, string> = {
+function getSeverityType(severity?: string | null): TagType {
+  const map: Record<string, TagType> = {
     CRITICAL: 'error',
     HIGH: 'warning',
     MEDIUM: 'default',
     LOW: 'success',
   }
-  return map[severity] || 'default'
+  return map[severity || ''] || 'default'
 }
 
 // 获取状态标签
-function getStatusLabel(status: string): string {
+function getStatusLabel(status?: string | null): string {
   const map: Record<string, string> = {
     PENDING: '待处理',
     PROCESSING: '处理中',
     RESOLVED: '已解决',
     IGNORED: '已忽略',
   }
-  return map[status] || status
+  return map[status || ''] || status || '-'
 }
 
 // 获取状态类型
-function getStatusType(status: string): string {
-  const map: Record<string, string> = {
+function getStatusType(status?: string | null): TagType {
+  const map: Record<string, TagType> = {
     PENDING: 'error',
     PROCESSING: 'warning',
     RESOLVED: 'success',
     IGNORED: 'default',
   }
-  return map[status] || 'default'
+  return map[status || ''] || 'default'
 }
 
 // 表格列定义
-const columns = [
+const columns: DataTableColumns<BadcaseRow> = [
   { title: 'ID', key: 'id', width: 80 },
   {
     title: '严重程度',
     key: 'severity',
     width: 100,
-    render(row: any) {
+    render(row) {
       return h(
-        'n-tag',
+        NTag,
         { type: getSeverityType(row.severity), size: 'small' },
         { default: () => getSeverityLabel(row.severity) }
       )
@@ -314,9 +347,9 @@ const columns = [
     title: '状态',
     key: 'status',
     width: 100,
-    render(row: any) {
+    render(row) {
       return h(
-        'n-tag',
+        NTag,
         { type: getStatusType(row.status), size: 'small' },
         { default: () => getStatusLabel(row.status) }
       )
@@ -328,17 +361,17 @@ const columns = [
     key: 'actions',
     width: 150,
     fixed: 'right',
-    render(row: any) {
-      return h('n-space', null, {
+    render(row) {
+      return h(NSpace, null, {
         default: () => [
           row.status === 'PENDING' &&
             h(
-              'n-button',
+              NButton,
               { size: 'small', type: 'primary', onClick: () => handleProcess(row) },
               { default: () => '处理' }
             ),
           h(
-            'n-button',
+            NButton,
             { size: 'small', onClick: () => handleViewDetail(row) },
             { default: () => '详情' }
           ),
@@ -352,7 +385,7 @@ const columns = [
 async function loadData() {
   loading.value = true
   try {
-    const params: any = {
+    const params: Record<string, string | number | undefined> = {
       pageNum: pagination.page,
       pageSize: pagination.pageSize,
       severity: searchForm.severity || undefined,
@@ -360,25 +393,27 @@ async function loadData() {
       keyword: searchForm.keyword || undefined,
     }
 
-    const res: any = await badcaseApi.page(params)
+    const res = await badcaseApi.page(params)
     if (res.code === 200) {
-      tableData.value = res.data.records || []
-      pagination.itemCount = res.data.total || 0
+      const pageData = (res.data || {}) as BadcasePageResult
+      tableData.value = pageData.records || []
+      pagination.itemCount = pageData.total || 0
     }
     
     // 加载统计数据
     try {
-      const statsRes: any = await badcaseApi.getStats()
+      const statsRes = await badcaseApi.getStats()
       if (statsRes.code === 200) {
-        stats.pending = statsRes.data.pending || 0
-        stats.processing = statsRes.data.processing || 0
-        stats.resolved = statsRes.data.resolved || 0
-        stats.weeklyNew = statsRes.data.weeklyNew || 0
+        const summary = (statsRes.data || {}) as BadcaseStats
+        stats.pending = summary.pending || 0
+        stats.processing = summary.processing || 0
+        stats.resolved = summary.resolved || 0
+        stats.weeklyNew = summary.weeklyNew || 0
       }
-    } catch (error) {
-      console.error('加载统计数据失败', error)
+    } catch {
+      console.error('加载统计数据失败')
     }
-  } catch (error) {
+  } catch {
     message.error('加载Badcase列表失败')
   } finally {
     loading.value = false
@@ -413,7 +448,7 @@ function handlePageSizeChange(size: number) {
 }
 
 // 处理Badcase
-function handleProcess(row: any) {
+function handleProcess(row: BadcaseRow) {
   currentBadcase.value = row
   processForm.status = 'PROCESSING'
   processForm.resolution = ''
@@ -423,31 +458,31 @@ function handleProcess(row: any) {
 
 // 提交处理
 async function handleProcessSubmit() {
-  formRef.value?.validate(async (errors: any) => {
-    if (errors) return
+  if (!currentBadcase.value) return
 
-    submitLoading.value = true
-    try {
-      const res: any = await badcaseApi.process(currentBadcase.value.id, {
-        status: processForm.status,
-        resolution: processForm.resolution,
-        improvement: processForm.improvement,
-      })
-      if (res.code === 200) {
-        message.success('处理成功')
-        processVisible.value = false
-        loadData()
-      }
-    } catch (error) {
-      message.error('处理失败')
-    } finally {
-      submitLoading.value = false
+  await formRef.value?.validate()
+
+  submitLoading.value = true
+  try {
+    const res = await badcaseApi.process(currentBadcase.value.id, {
+      status: processForm.status,
+      resolution: processForm.resolution,
+      improvement: processForm.improvement,
+    })
+    if (res.code === 200) {
+      message.success('处理成功')
+      processVisible.value = false
+      loadData()
     }
-  })
+  } catch {
+    message.error('处理失败')
+  } finally {
+    submitLoading.value = false
+  }
 }
 
 // 查看详情
-function handleViewDetail(row: any) {
+function handleViewDetail(row: BadcaseRow) {
   currentBadcase.value = row
   detailVisible.value = true
 }

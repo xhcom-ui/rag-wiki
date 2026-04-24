@@ -21,9 +21,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, h } from 'vue'
+import { computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { NIcon } from 'naive-ui'
 import { useUserStore } from '@/stores/user'
 
 const router = useRouter()

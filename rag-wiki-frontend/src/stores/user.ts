@@ -1,26 +1,28 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { authApi } from '@/api'
+import type { CurrentUserVO, LoginVO } from '@/types/api'
 
-interface UserInfo {
-  userId: string
-  username: string
-  realName: string
-  deptName: string
-  securityLevel: number
-  token?: string
-}
+type UserInfo = Partial<CurrentUserVO & LoginVO>
 
 export const useUserStore = defineStore('user', () => {
   const token = ref(localStorage.getItem('token') || '')
   const userInfo = ref<UserInfo | null>(null)
 
-  async function login(username: string, password: string) {
-    const res: any = await authApi.login({ username, password })
-    token.value = res.data.token
-    userInfo.value = res.data
-    localStorage.setItem('token', res.data.token)
-    return res.data
+  async function login(username: string, password: string, totpCode?: string) {
+    const loginData: { username: string; password: string; totpCode?: string; loginType?: string } = { username, password }
+    if (totpCode) {
+      loginData.totpCode = totpCode
+      loginData.loginType = 'TWO_FACTOR'
+    }
+    const res = await authApi.login(loginData)
+    const loginResult = res.data
+    token.value = loginResult.token || ''
+    userInfo.value = loginResult
+    if (loginResult.token) {
+      localStorage.setItem('token', loginResult.token)
+    }
+    return loginResult
   }
 
   function logout() {
@@ -34,7 +36,7 @@ export const useUserStore = defineStore('user', () => {
   }
 
   async function getUserInfo() {
-    const res: any = await authApi.getCurrentUser()
+    const res = await authApi.getCurrentUser()
     userInfo.value = res.data
     return res.data
   }

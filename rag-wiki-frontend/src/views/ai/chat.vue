@@ -89,6 +89,7 @@
 <script setup lang="ts">
 import { ref, nextTick, onMounted } from 'vue'
 import { ragApi, spaceApi } from '@/api'
+import type { RAGAnswerVO, SpaceVO } from '@/types/api'
 import { sanitizeHTML } from '@/utils/sanitize'
 import dayjs from 'dayjs'
 
@@ -112,6 +113,20 @@ interface Session {
   messages: Message[]
 }
 
+interface StreamPacket {
+  type?: 'sources' | 'token' | 'error' | 'done'
+  data?: Source[] | string | { session_id?: string }
+}
+
+function extractSessionId(payload: StreamPacket['data']) {
+  if (payload && !Array.isArray(payload) && typeof payload === 'object') {
+    return payload.session_id
+  }
+  return undefined
+}
+
+const SESSION_STORAGE_KEY = 'rag-chat-sessions'
+
 const question = ref('')
 const loading = ref(false)
 const messages = ref<Message[]>([])
@@ -130,13 +145,13 @@ const quickQuestions = [
 
 onMounted(() => {
   loadSpaces()
-  newSession()
+  restoreSessions()
 })
 
 async function loadSpaces() {
   try {
-    const res: any = await spaceApi.list({ pageNum: 1, pageSize: 100 })
-    spaceOptions.value = (res.data?.records || []).map((s: any) => ({
+    const res = await spaceApi.list({ pageNum: 1, pageSize: 100 })
+    spaceOptions.value = (res.data?.records || []).map((s: SpaceVO) => ({
       label: s.spaceName,
       value: s.spaceId,
     }))
@@ -155,6 +170,7 @@ function newSession() {
   sessions.value.unshift(session)
   currentSessionId.value = session.id
   messages.value = []
+  persistSessions()
 }
 
 function switchSession(id: string) {
@@ -185,7 +201,7 @@ async function handleSend() {
     const response = await ragApi.queryStream({
       question: q,
       session_id: currentSessionId.value,
-      space_id: selectedSpaceId.value,
+      space_id: selectedSpaceId.value || undefined,
       stream: true,
     })
 
@@ -194,32 +210,53 @@ async function handleSend() {
       const decoder = new TextDecoder()
       let fullContent = ''
       let sources: Source[] = []
+      let buffer = ''
 
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
 
-        const text = decoder.decode(value, { stream: true })
-        const lines = text.split('\n\n')
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split(/\r?\n/)
+        buffer = lines.pop() || ''
 
         for (const line of lines) {
-          if (!line.startsWith('{')) continue
+          const payload = line.trim()
+          if (!payload.startsWith('{')) continue
           try {
-            const data = JSON.parse(line)
+            const data = JSON.parse(payload) as StreamPacket
             if (data.type === 'sources') {
-              sources = data.data || []
+              sources = Array.isArray(data.data) ? data.data : []
             } else if (data.type === 'token') {
-              fullContent += data.data
+              fullContent += typeof data.data === 'string' ? data.data : ''
               streamingContent.value = fullContent
               scrollToBottom()
+            } else if (data.type === 'error') {
+              throw new Error(typeof data.data === 'string' ? data.data : '流式回答失败')
             } else if (data.type === 'done') {
-              if (data.data?.session_id) {
-                currentSessionId.value = data.data.session_id
+              const sessionId = extractSessionId(data.data)
+              if (sessionId) {
+                syncCurrentSessionId(sessionId)
               }
             }
           } catch (parseError) {
             console.warn('[Chat] SSE数据解析失败', parseError)
           }
+        }
+      }
+
+      const remaining = buffer.trim()
+      if (remaining.startsWith('{')) {
+        try {
+          const data = JSON.parse(remaining) as StreamPacket
+          if (data.type === 'done') {
+            const sessionId = extractSessionId(data.data)
+            if (sessionId) {
+              syncCurrentSessionId(sessionId)
+            }
+          }
+        } catch (parseError) {
+          console.warn('[Chat] 尾包解析失败', parseError)
         }
       }
 
@@ -231,23 +268,27 @@ async function handleSend() {
       })
     } else {
       // 回退到非流式
-      const res: any = await ragApi.query({
+      const response = await ragApi.query({
         question: q,
         session_id: currentSessionId.value,
-        space_id: selectedSpaceId.value,
+        space_id: selectedSpaceId.value || undefined,
       })
+      const res: Partial<RAGAnswerVO> = response.data || {}
       messages.value.push({
         id: Date.now().toString(),
         role: 'assistant',
-        content: res.data?.answer || '暂无回答',
-        sources: res.data?.sources || [],
+        content: res.answer || '暂无回答',
+        sources: res.sources || [],
       })
+      if (res.session_id) {
+        syncCurrentSessionId(res.session_id)
+      }
     }
-  } catch (e: any) {
+  } catch (error: unknown) {
     messages.value.push({
       id: Date.now().toString(),
       role: 'assistant',
-      content: '抱歉，回答生成失败：' + (e.message || '未知错误'),
+      content: '抱歉，回答生成失败：' + (error instanceof Error ? error.message : '未知错误'),
     })
   } finally {
     streamingContent.value = ''
@@ -265,6 +306,41 @@ function updateSession() {
     if (messages.value.length > 0 && session.title === '新对话') {
       session.title = messages.value[0].content.slice(0, 20) + '...'
     }
+    persistSessions()
+  }
+}
+
+function syncCurrentSessionId(nextId: string) {
+  const session = sessions.value.find(s => s.id === currentSessionId.value)
+  if (session) {
+    session.id = nextId
+  }
+  currentSessionId.value = nextId
+  persistSessions()
+}
+
+function persistSessions() {
+  localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(sessions.value))
+}
+
+function restoreSessions() {
+  const saved = localStorage.getItem(SESSION_STORAGE_KEY)
+  if (!saved) {
+    newSession()
+    return
+  }
+
+  try {
+    const parsed = JSON.parse(saved) as Session[]
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      newSession()
+      return
+    }
+    sessions.value = parsed
+    currentSessionId.value = parsed[0].id
+    messages.value = [...(parsed[0].messages || [])]
+  } catch {
+    newSession()
   }
 }
 

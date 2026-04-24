@@ -83,9 +83,29 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted, h } from 'vue'
-import { useMessage } from 'naive-ui'
+import { NButton, NTag, useMessage, type DataTableColumns } from 'naive-ui'
 import { DownloadOutline, EyeOutline } from '@vicons/ionicons5'
 import { auditApi } from '@/api'
+
+type TagType = 'default' | 'primary' | 'info' | 'success' | 'warning' | 'error'
+
+interface AuditLogRow {
+  id: number | string
+  username?: string
+  actionType: string
+  target?: string
+  success: boolean
+  ip?: string
+  createdAt?: string
+  requestParams?: unknown
+  responseResult?: unknown
+  errorMsg?: string
+}
+
+interface AuditPageResult {
+  records?: AuditLogRow[]
+  total?: number
+}
 
 const message = useMessage()
 
@@ -111,7 +131,7 @@ const actionTypeOptions = [
 ]
 
 // 表格数据
-const tableData = ref<any[]>([])
+const tableData = ref<AuditLogRow[]>([])
 const loading = ref(false)
 const pagination = reactive({
   page: 1,
@@ -123,10 +143,10 @@ const pagination = reactive({
 
 // 详情弹窗
 const detailVisible = ref(false)
-const currentLog = ref<any>(null)
+const currentLog = ref<AuditLogRow | null>(null)
 
 // 获取操作类型标签
-function getActionTypeLabel(type: string): string {
+function getActionTypeLabel(type?: string | null): string {
   const map: Record<string, string> = {
     LOGIN: '登录',
     LOGOUT: '登出',
@@ -139,12 +159,12 @@ function getActionTypeLabel(type: string): string {
     APPROVAL: '审批',
     EXPORT: '导出',
   }
-  return map[type] || type
+  return map[type || ''] || type || '-'
 }
 
 // 获取操作类型颜色
-function getActionTypeColor(type: string): string {
-  const map: Record<string, string> = {
+function getActionTypeColor(type?: string | null): TagType {
+  const map: Record<string, TagType> = {
     LOGIN: 'success',
     LOGOUT: 'default',
     CREATE: 'info',
@@ -156,11 +176,11 @@ function getActionTypeColor(type: string): string {
     APPROVAL: 'warning',
     EXPORT: 'default',
   }
-  return map[type] || 'default'
+  return map[type || ''] || 'default'
 }
 
 // 格式化JSON
-function formatJson(data: any): string {
+function formatJson(data: unknown): string {
   if (!data) return ''
   try {
     const obj = typeof data === 'string' ? JSON.parse(data) : data
@@ -171,16 +191,16 @@ function formatJson(data: any): string {
 }
 
 // 表格列定义
-const columns = [
+const columns: DataTableColumns<AuditLogRow> = [
   { title: 'ID', key: 'id', width: 80 },
   { title: '操作用户', key: 'username', width: 120 },
   {
     title: '操作类型',
     key: 'actionType',
     width: 100,
-    render(row: any) {
+    render(row) {
       return h(
-        'n-tag',
+        NTag,
         { type: getActionTypeColor(row.actionType), size: 'small' },
         { default: () => getActionTypeLabel(row.actionType) }
       )
@@ -192,9 +212,9 @@ const columns = [
     key: 'success',
     width: 80,
     align: 'center',
-    render(row: any) {
+    render(row) {
       return h(
-        'n-tag',
+        NTag,
         { type: row.success ? 'success' : 'error', size: 'small' },
         { default: () => (row.success ? '成功' : '失败') }
       )
@@ -207,9 +227,9 @@ const columns = [
     key: 'actions',
     width: 100,
     fixed: 'right',
-    render(row: any) {
+    render(row) {
       return h(
-        'n-button',
+        NButton,
         {
           size: 'small',
           onClick: () => handleViewDetail(row),
@@ -224,7 +244,7 @@ const columns = [
 async function loadData() {
   loading.value = true
   try {
-    const params: any = {
+    const params: Record<string, string | number | undefined> = {
       pageNum: pagination.page,
       pageSize: pagination.pageSize,
       keyword: searchForm.keyword || undefined,
@@ -236,12 +256,13 @@ async function loadData() {
       params.endTime = new Date(searchForm.dateRange[1]).toISOString()
     }
 
-    const res: any = await auditApi.listLogs(params)
+    const res = await auditApi.listLogs(params)
     if (res.code === 200) {
-      tableData.value = res.data.records || []
-      pagination.itemCount = res.data.total || 0
+      const pageData = (res.data || {}) as AuditPageResult
+      tableData.value = pageData.records || []
+      pagination.itemCount = pageData.total || 0
     }
-  } catch (error) {
+  } catch {
     message.error('加载审计日志失败')
   } finally {
     loading.value = false
@@ -276,7 +297,7 @@ function handlePageSizeChange(size: number) {
 }
 
 // 查看详情
-function handleViewDetail(row: any) {
+function handleViewDetail(row: AuditLogRow) {
   currentLog.value = row
   detailVisible.value = true
 }

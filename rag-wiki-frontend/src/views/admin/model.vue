@@ -119,12 +119,51 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted, h } from 'vue'
-import { useMessage, useDialog, NTag, NSpace, NButton, NPopconfirm } from 'naive-ui'
+import { useMessage, NTag, NSpace, NButton, NPopconfirm, type DataTableColumns, type FormInst } from 'naive-ui'
 import { Add, CheckmarkCircle, CloseCircle } from '@vicons/ionicons5'
 import { llmConfigApi } from '@/api'
 
+interface ProviderOption {
+  label: string
+  value: string
+}
+
+interface LLMConfigRow {
+  configId: string
+  configName: string
+  provider: string
+  model: string
+  apiKey?: string
+  apiBase?: string
+  temperature?: number
+  maxTokens?: number
+  priority?: number
+  description?: string
+  isEnabled: number
+  isDefault: number
+}
+
+interface LLMConfigPageResult {
+  records?: LLMConfigRow[]
+  total?: number
+}
+
+interface LLMConfigForm {
+  configId: string
+  configName: string
+  provider: string
+  model: string
+  apiKey: string
+  apiBase: string
+  temperature: number
+  maxTokens: number
+  priority: number
+  description: string
+  isEnabled: boolean
+  isDefault: boolean
+}
+
 const message = useMessage()
-const dialog = useDialog()
 
 // 搜索表单
 const searchForm = reactive({
@@ -133,7 +172,7 @@ const searchForm = reactive({
 })
 
 // 提供商选项
-const providerOptions = ref<{ label: string; value: string }[]>([])
+const providerOptions = ref<ProviderOption[]>([])
 
 // 状态选项
 const statusOptions = [
@@ -142,7 +181,7 @@ const statusOptions = [
 ]
 
 // 表格数据
-const tableData = ref<any[]>([])
+const tableData = ref<LLMConfigRow[]>([])
 const loading = ref(false)
 const pagination = reactive({
   page: 1,
@@ -157,9 +196,9 @@ const modalVisible = ref(false)
 const modalTitle = ref('新增配置')
 const isEdit = ref(false)
 const submitLoading = ref(false)
-const formRef = ref<any>(null)
+const formRef = ref<FormInst | null>(null)
 
-const formData = reactive({
+const formData = reactive<LLMConfigForm>({
   configId: '',
   configName: '',
   provider: '',
@@ -182,13 +221,13 @@ const formRules = {
 }
 
 // 表格列定义
-const columns = [
+const columns: DataTableColumns<LLMConfigRow> = [
   { title: '配置名称', key: 'configName', width: 180 },
   {
     title: '提供商',
     key: 'provider',
     width: 120,
-    render(row: any) {
+    render(row) {
       const providerMap: Record<string, string> = {
         openai: 'OpenAI',
         deepseek: 'DeepSeek',
@@ -207,7 +246,7 @@ const columns = [
     key: 'isDefault',
     width: 80,
     align: 'center',
-    render(row: any) {
+    render(row) {
       return row.isDefault === 1
         ? h(CheckmarkCircle, { style: 'color: #18a058; font-size: 18px' })
         : h(CloseCircle, { style: 'color: #d9d9d9; font-size: 18px' })
@@ -218,7 +257,7 @@ const columns = [
     key: 'isEnabled',
     width: 80,
     align: 'center',
-    render(row: any) {
+    render(row) {
       return h(
         NTag,
         { type: row.isEnabled === 1 ? 'success' : 'default', size: 'small' },
@@ -234,7 +273,7 @@ const columns = [
     key: 'actions',
     width: 200,
     fixed: 'right',
-    render(row: any) {
+    render(row) {
       return h(NSpace, null, {
         default: () => [
           row.isDefault !== 1 &&
@@ -261,9 +300,9 @@ const columns = [
 // 加载提供商选项
 async function loadProviders() {
   try {
-    const res: any = await llmConfigApi.getProviders()
+    const res = await llmConfigApi.getProviders()
     if (res.code === 200) {
-      providerOptions.value = res.data
+      providerOptions.value = Array.isArray(res.data) ? res.data : []
     }
   } catch (error) {
     console.error('加载提供商列表失败', error)
@@ -274,17 +313,18 @@ async function loadProviders() {
 async function loadData() {
   loading.value = true
   try {
-    const res: any = await llmConfigApi.page({
+    const res = await llmConfigApi.page({
       pageNum: pagination.page,
       pageSize: pagination.pageSize,
       provider: searchForm.provider || undefined,
       isEnabled: searchForm.isEnabled ?? undefined,
     })
     if (res.code === 200) {
-      tableData.value = res.data.records
-      pagination.itemCount = res.data.total
+      const pageData = (res.data || {}) as LLMConfigPageResult
+      tableData.value = pageData.records || []
+      pagination.itemCount = pageData.total || 0
     }
-  } catch (error) {
+  } catch {
     message.error('加载配置列表失败')
   } finally {
     loading.value = false
@@ -326,79 +366,86 @@ function handleAdd() {
 }
 
 // 编辑
-async function handleEdit(row: any) {
+async function handleEdit(row: LLMConfigRow) {
   isEdit.value = true
   modalTitle.value = '编辑配置'
   try {
-    const res: any = await llmConfigApi.getById(row.configId)
+    const res = await llmConfigApi.getById(row.configId)
     if (res.code === 200 && res.data) {
-      Object.assign(formData, res.data)
-      formData.isEnabled = res.data.isEnabled === 1
-      formData.isDefault = res.data.isDefault === 1
+      const data = res.data as Partial<LLMConfigRow>
+      Object.assign(formData, {
+        configId: data.configId || '',
+        configName: data.configName || '',
+        provider: data.provider || '',
+        model: data.model || '',
+        apiKey: data.apiKey || '',
+        apiBase: data.apiBase || '',
+        temperature: data.temperature ?? 0.7,
+        maxTokens: data.maxTokens ?? 4096,
+        priority: data.priority ?? 0,
+        description: data.description || '',
+        isEnabled: data.isEnabled === 1,
+        isDefault: data.isDefault === 1,
+      })
       modalVisible.value = true
     }
-  } catch (error) {
+  } catch {
     message.error('获取配置详情失败')
   }
 }
 
 // 设为默认
-async function handleSetDefault(row: any) {
+async function handleSetDefault(row: LLMConfigRow) {
   try {
-    const res: any = await llmConfigApi.setDefault(row.configId)
+    const res = await llmConfigApi.setDefault(row.configId)
     if (res.code === 200) {
       message.success('设置成功')
       loadData()
     }
-  } catch (error) {
+  } catch {
     message.error('设置失败')
   }
 }
 
 // 删除
-async function handleDelete(row: any) {
+async function handleDelete(row: LLMConfigRow) {
   try {
-    const res: any = await llmConfigApi.delete(row.configId)
+    const res = await llmConfigApi.delete(row.configId)
     if (res.code === 200) {
       message.success('删除成功')
       loadData()
     }
-  } catch (error) {
+  } catch {
     message.error('删除失败')
   }
 }
 
 // 提交表单
 async function handleSubmit() {
-  formRef.value?.validate(async (errors: any) => {
-    if (errors) return
+  await formRef.value?.validate()
 
-    submitLoading.value = true
-    try {
-      const data = {
-        ...formData,
-        isEnabled: formData.isEnabled ? 1 : 0,
-        isDefault: formData.isDefault ? 1 : 0,
-      }
-
-      let res: any
-      if (isEdit.value) {
-        res = await llmConfigApi.update(formData.configId, data)
-      } else {
-        res = await llmConfigApi.create(data)
-      }
-
-      if (res.code === 200) {
-        message.success(isEdit.value ? '更新成功' : '创建成功')
-        modalVisible.value = false
-        loadData()
-      }
-    } catch (error) {
-      message.error(isEdit.value ? '更新失败' : '创建失败')
-    } finally {
-      submitLoading.value = false
+  submitLoading.value = true
+  try {
+    const data = {
+      ...formData,
+      isEnabled: formData.isEnabled ? 1 : 0,
+      isDefault: formData.isDefault ? 1 : 0,
     }
-  })
+
+    const res = isEdit.value
+      ? await llmConfigApi.update(formData.configId, data)
+      : await llmConfigApi.create(data)
+
+    if (res.code === 200) {
+      message.success(isEdit.value ? '更新成功' : '创建成功')
+      modalVisible.value = false
+      loadData()
+    }
+  } catch {
+    message.error(isEdit.value ? '更新失败' : '创建失败')
+  } finally {
+    submitLoading.value = false
+  }
 }
 
 // 重置表单

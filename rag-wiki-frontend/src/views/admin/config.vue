@@ -60,10 +60,28 @@ import { ref, onMounted } from 'vue'
 import { useMessage } from 'naive-ui'
 import { configApi } from '@/api'
 
+interface ConfigItem {
+  configKey: string
+  configValue?: string
+  configType?: string
+  description?: string
+  isSystem?: number
+  isReadonly?: number
+  editValue: string
+  editNumber: number
+  editBool: boolean
+}
+
+interface ConfigGroup {
+  groupKey: string
+  groupLabel: string
+  configs?: Array<Omit<ConfigItem, 'editValue' | 'editNumber' | 'editBool'>>
+}
+
 const message = useMessage()
 const activeGroup = ref('BASIC')
-const groups = ref<any[]>([])
-const currentConfigs = ref<any[]>([])
+const groups = ref<ConfigGroup[]>([])
+const currentConfigs = ref<ConfigItem[]>([])
 
 onMounted(() => {
   loadGroups()
@@ -71,35 +89,25 @@ onMounted(() => {
 
 async function loadGroups() {
   try {
-    const res: any = await configApi.getAllGroups()
-    groups.value = res.data || []
+    const res = await configApi.getAllGroups()
+    groups.value = Array.isArray(res.data) ? (res.data as ConfigGroup[]) : []
     if (groups.value.length > 0) {
       activeGroup.value = groups.value[0].groupKey
-      currentConfigs.value = groups.value[0].configs?.map((c: any) => ({
-        ...c,
-        editValue: c.configValue || '',
-        editNumber: Number(c.configValue) || 0,
-        editBool: c.configValue === 'true',
-      })) || []
+      currentConfigs.value = toEditableConfigs(groups.value[0].configs)
     }
-  } catch (e: any) {
-    message.error(e.message || '加载配置失败')
+  } catch (error: unknown) {
+    message.error(error instanceof Error ? error.message : '加载配置失败')
   }
 }
 
 async function loadConfigs(groupKey: string) {
-  const group = groups.value.find(g => g.groupKey === groupKey)
+  const group = groups.value.find((g) => g.groupKey === groupKey)
   if (group) {
-    currentConfigs.value = group.configs?.map((c: any) => ({
-      ...c,
-      editValue: c.configValue || '',
-      editNumber: Number(c.configValue) || 0,
-      editBool: c.configValue === 'true',
-    })) || []
+    currentConfigs.value = toEditableConfigs(group.configs)
   }
 }
 
-async function saveConfig(config: any) {
+async function saveConfig(config: ConfigItem) {
   try {
     let value = config.editValue
     if (config.configType === 'NUMBER') value = String(config.editNumber)
@@ -107,9 +115,18 @@ async function saveConfig(config: any) {
     await configApi.updateValue(config.configKey, value)
     config.configValue = value
     message.success('配置已保存')
-  } catch (e: any) {
-    message.error(e.message || '保存失败')
+  } catch (error: unknown) {
+    message.error(error instanceof Error ? error.message : '保存失败')
   }
+}
+
+function toEditableConfigs(configs?: Array<Omit<ConfigItem, 'editValue' | 'editNumber' | 'editBool'>>): ConfigItem[] {
+  return (configs || []).map((config) => ({
+    ...config,
+    editValue: config.configValue || '',
+    editNumber: Number(config.configValue) || 0,
+    editBool: config.configValue === 'true',
+  }))
 }
 </script>
 

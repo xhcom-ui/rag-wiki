@@ -124,9 +124,39 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted, h } from 'vue'
-import { useMessage, useDialog } from 'naive-ui'
+import { useMessage, useDialog, NButton, NPopconfirm, NSpace, type DataTableColumns } from 'naive-ui'
 import { RefreshOutline, SearchOutline, EyeOutline, TrashOutline } from '@vicons/ionicons5'
 import { vectorApi, vectorAdminApi } from '@/api'
+
+interface VectorStats {
+  totalDocuments?: number
+  totalVectors?: number
+  storageSize?: number
+  collectionCount?: number
+}
+
+interface VectorRow {
+  id: string
+  documentId?: string
+  documentName?: string
+  spaceName?: string
+  chunkIndex?: number
+  content?: string
+  createdAt?: string
+  dimension?: number
+  metadata?: unknown
+}
+
+interface VectorPageResult {
+  records?: VectorRow[]
+  total?: number
+}
+
+interface SimilarityResult {
+  score: number
+  documentName?: string
+  content?: string
+}
 
 const message = useMessage()
 const dialog = useDialog()
@@ -153,7 +183,7 @@ const stats = reactive({
 })
 
 // 表格数据
-const tableData = ref<any[]>([])
+const tableData = ref<VectorRow[]>([])
 const loading = ref(false)
 const pagination = reactive({
   page: 1,
@@ -167,12 +197,12 @@ const pagination = reactive({
 const searchVisible = ref(false)
 const searchQuery = ref('')
 const searchLoading = ref(false)
-const searchResults = ref<any[]>([])
+const searchResults = ref<SimilarityResult[]>([])
 const searched = ref(false)
 
 // 详情弹窗
 const detailVisible = ref(false)
-const currentVector = ref<any>(null)
+const currentVector = ref<VectorRow | null>(null)
 
 // 格式化大小
 function formatSize(bytes: number): string {
@@ -183,7 +213,7 @@ function formatSize(bytes: number): string {
 }
 
 // 格式化JSON
-function formatJson(data: any): string {
+function formatJson(data: unknown): string {
   if (!data) return ''
   try {
     const obj = typeof data === 'string' ? JSON.parse(data) : data
@@ -194,7 +224,7 @@ function formatJson(data: any): string {
 }
 
 // 表格列定义
-const columns = [
+const columns: DataTableColumns<VectorRow> = [
   { title: 'ID', key: 'id', width: 100, ellipsis: { tooltip: true } },
   { title: '文档名称', key: 'documentName', width: 200, ellipsis: { tooltip: true } },
   { title: '知识库', key: 'spaceName', width: 150 },
@@ -203,7 +233,7 @@ const columns = [
     title: '内容预览',
     key: 'content',
     ellipsis: { tooltip: true },
-    render(row: any) {
+    render(row) {
       return row.content?.slice(0, 100) + '...'
     },
   },
@@ -213,25 +243,25 @@ const columns = [
     key: 'actions',
     width: 200,
     fixed: 'right',
-    render(row: any) {
-      return h('n-space', null, {
+    render(row) {
+      return h(NSpace, null, {
         default: () => [
           h(
-            'n-button',
+            NButton,
             { size: 'small', onClick: () => handleSearchSimilar(row) },
             { default: () => '相似搜索', icon: () => h(SearchOutline) }
           ),
           h(
-            'n-button',
+            NButton,
             { size: 'small', onClick: () => handleViewDetail(row) },
             { default: () => '详情', icon: () => h(EyeOutline) }
           ),
           h(
-            'n-popconfirm',
+            NPopconfirm,
             { onPositiveClick: () => handleDelete(row) },
             {
               trigger: () =>
-                h('n-button', { size: 'small', type: 'error' }, {
+                h(NButton, { size: 'small', type: 'error' }, {
                   default: () => '删除',
                   icon: () => h(TrashOutline),
                 }),
@@ -247,15 +277,16 @@ const columns = [
 // 加载统计数据
 async function loadStats() {
   try {
-    const res: any = await vectorAdminApi.getStats()
+    const res = await vectorAdminApi.getStats()
     if (res.code === 200) {
-      stats.totalDocuments = res.data.totalDocuments || 0
-      stats.totalVectors = res.data.totalVectors || 0
-      stats.storageSize = res.data.storageSize || 0
-      stats.collectionCount = res.data.collectionCount || 0
+      const summary = (res.data || {}) as VectorStats
+      stats.totalDocuments = summary.totalDocuments || 0
+      stats.totalVectors = summary.totalVectors || 0
+      stats.storageSize = summary.storageSize || 0
+      stats.collectionCount = summary.collectionCount || 0
     }
-  } catch (error) {
-    console.error('加载统计数据失败', error)
+  } catch {
+    console.error('加载统计数据失败')
   }
 }
 
@@ -263,18 +294,19 @@ async function loadStats() {
 async function loadData() {
   loading.value = true
   try {
-    const params: any = {
+    const params: Record<string, string | number | undefined> = {
       pageNum: pagination.page,
       pageSize: pagination.pageSize,
       collection: searchForm.collection || undefined,
       keyword: searchForm.keyword || undefined,
     }
-    const res: any = await vectorAdminApi.page(params)
+    const res = await vectorAdminApi.page(params)
     if (res.code === 200) {
-      tableData.value = res.data.records || []
-      pagination.itemCount = res.data.total || 0
+      const pageData = (res.data || {}) as VectorPageResult
+      tableData.value = pageData.records || []
+      pagination.itemCount = pageData.total || 0
     }
-  } catch (error) {
+  } catch {
     message.error('加载向量数据失败')
   } finally {
     loading.value = false
@@ -308,9 +340,9 @@ function handlePageSizeChange(size: number) {
 }
 
 // 相似度搜索
-function handleSearchSimilar(row: any) {
+function handleSearchSimilar(row: VectorRow) {
   currentVector.value = row
-  searchQuery.value = row.content
+  searchQuery.value = row.content || ''
   searchResults.value = []
   searched.value = false
   searchVisible.value = true
@@ -326,15 +358,15 @@ async function handleSimilaritySearch() {
   searchLoading.value = true
   searched.value = false
   try {
-    const res: any = await vectorApi.search({
+    const res = await vectorApi.search({
       query: searchQuery.value,
       top_k: 10,
     })
     if (res.code === 200) {
-      searchResults.value = res.data || []
+      searchResults.value = Array.isArray(res.data) ? (res.data as SimilarityResult[]) : []
       searched.value = true
     }
-  } catch (error) {
+  } catch {
     message.error('搜索失败')
   } finally {
     searchLoading.value = false
@@ -342,20 +374,20 @@ async function handleSimilaritySearch() {
 }
 
 // 查看详情
-function handleViewDetail(row: any) {
+function handleViewDetail(row: VectorRow) {
   currentVector.value = row
   detailVisible.value = true
 }
 
 // 删除向量
-async function handleDelete(row: any) {
+async function handleDelete(row: VectorRow) {
   try {
-    const res: any = await vectorAdminApi.delete(row.id)
+    const res = await vectorAdminApi.delete(row.id)
     if (res.code === 200) {
       message.success('删除成功')
       loadData()
     }
-  } catch (error) {
+  } catch {
     message.error('删除失败')
   }
 }
@@ -369,11 +401,11 @@ function handleRebuildIndex() {
     negativeText: '取消',
     onPositiveClick: async () => {
       try {
-        const res: any = await vectorAdminApi.rebuildIndex(searchForm.collection || undefined)
+        const res = await vectorAdminApi.rebuildIndex(searchForm.collection || undefined)
         if (res.code === 200) {
           message.success(`索引重建任务已提交，任务ID: ${res.data.taskId}`)
         }
-      } catch (error) {
+      } catch {
         message.error('操作失败')
       }
     },

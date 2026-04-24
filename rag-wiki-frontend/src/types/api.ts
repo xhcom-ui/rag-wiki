@@ -1,11 +1,18 @@
 /**
  * 通用API响应类型
  */
-export interface ApiResponse<T = any> {
+export interface ApiResponse<T = unknown> {
   code: number
   message: string
   data: T
   traceId?: string
+}
+
+export interface RoleInfo {
+  roleId: string
+  roleName: string
+  roleCode: string
+  roleLevel?: number
 }
 
 /**
@@ -57,7 +64,11 @@ export interface UserVO {
   extInfo: string
   createdAt: string
   updatedAt: string
+  roleIds?: string[]
+  roles?: RoleInfo[]
 }
+
+export interface CurrentUserVO extends UserVO {}
 
 /**
  * 角色相关类型
@@ -75,6 +86,7 @@ export interface RoleVO {
   roleCode: string
   description: string
   status: number
+  permissions?: string[]
   createdAt: string
   updatedAt: string
 }
@@ -92,8 +104,10 @@ export interface DeptDTO {
 export interface DeptVO {
   deptId: number
   deptName: string
+  deptCode?: string
   parentId: number
   parentName: string
+  sort?: number
   sortOrder: number
   status: number
   children?: DeptVO[]
@@ -117,7 +131,14 @@ export interface SpaceVO {
   description: string
   securityLevel: number
   tenantId: string
-  status: number
+  status?: number
+  visibility?: string
+  spaceCode?: string
+  ownerDeptName?: string
+  creatorName?: string
+  documentCount?: number
+  storageSize?: number
+  members?: Array<{ avatar?: string }>
   createdAt: string
   updatedAt: string
 }
@@ -135,20 +156,25 @@ export interface DocumentDTO {
 }
 
 export interface DocumentVO {
+  id?: number
   documentId: string
   documentName: string
   spaceId: string
-  spaceName: string
-  documentType: string
-  fileSize: number
-  version: string
-  status: number
-  isFolder: number
-  securityLevel: number
-  creatorId: string
-  creatorName: string
-  createdAt: string
-  updatedAt: string
+  spaceName?: string
+  documentType?: string
+  filePath?: string
+  fileSize?: number
+  version?: string
+  status?: number | string
+  isFolder?: number
+  securityLevel?: number
+  creatorId?: string
+  creatorName?: string
+  content?: string
+  documentContent?: string
+  parsedAt?: string
+  createdAt?: string
+  updatedAt?: string
 }
 
 /**
@@ -164,6 +190,8 @@ export interface LoginVO {
   userId: string
   username: string
   realName: string
+  deptName?: string
+  securityLevel?: number
 }
 
 /**
@@ -186,6 +214,119 @@ export interface RAGAnswerVO {
   }>
   session_id: string
   traceId?: string
+}
+
+export type AgentTaskStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED'
+export type AgentTaskStepStatus = 'pending' | 'running' | 'completed' | 'failed'
+
+export interface AgentTaskStepVO {
+  name: string
+  description: string
+  status: AgentTaskStepStatus
+  timestamp: string
+}
+
+export interface AgentTaskSourceVO {
+  type: string
+  title: string
+  content?: string
+}
+
+export interface AgentTaskVO {
+  taskId: string
+  title?: string
+  query: string
+  status: AgentTaskStatus
+  progress?: number
+  createdAt: string
+  completedAt?: string
+  result?: string
+  steps?: AgentTaskStepVO[]
+  sources?: AgentTaskSourceVO[]
+}
+
+export interface AgentSubmitDTO {
+  query: string
+  depth: 'quick' | 'standard' | 'deep'
+  spaces?: string[]
+  tools?: string[]
+}
+
+export interface SandboxExecuteDTO {
+  code: string
+  language: 'python' | 'javascript' | 'bash'
+}
+
+export interface SandboxExecuteVO {
+  output?: string
+  error?: string
+  taskId?: string
+}
+
+export interface SessionMessageVO {
+  id: string
+  role?: string
+  content?: string
+}
+
+export interface SessionVO {
+  sessionId: string
+  title?: string
+  type?: string
+  messageCount?: number
+  createdAt?: string
+  updatedAt?: string
+  messages?: SessionMessageVO[]
+}
+
+export interface FavoriteStateVO {
+  favorited: boolean
+}
+
+export interface LikeStateVO {
+  liked: boolean
+  likeCount: number
+}
+
+export interface DocumentCommentVO {
+  id?: number
+  commentId?: string
+  documentId?: string
+  userId?: string
+  username?: string
+  content: string
+  createdAt?: string
+}
+
+export interface DocumentVersionVO {
+  id?: number
+  versionId?: string
+  documentId?: string
+  version: string
+  changeLog?: string
+  createdAt?: string
+}
+
+export interface DocumentPermissionVO {
+  id?: number
+  documentId?: string
+  type?: string
+  name?: string
+  permission?: string
+  allowedRoleIds?: string
+  allowedUserIds?: string
+  owningDeptId?: string
+  createdAt?: string
+}
+
+export interface ApiKeyVO {
+  keyId: string
+  keyName: string
+  keyPrefix?: string
+  isEnabled?: boolean
+  rateLimit?: number
+  createdAt?: string
+  lastUsedAt?: string
 }
 
 /**

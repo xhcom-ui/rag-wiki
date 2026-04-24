@@ -104,11 +104,36 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, h } from 'vue'
+import { ref, reactive, onMounted, watch, h } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { NButton, NSpace, NTag, NProgress, useMessage, type DataTableColumns, type UploadFileInfo } from 'naive-ui'
+import { NButton, NSpace, NTag, useMessage, type DataTableColumns, type UploadFileInfo } from 'naive-ui'
 import { ArchiveOutline } from '@vicons/ionicons5'
 import { spaceApi, documentApi, parseApi } from '@/api'
+import type { DocumentVO, SpaceVO } from '@/types/api'
+
+type Visibility = 'PUBLIC' | 'PRIVATE'
+type DocumentStatusKey = 'DRAFT' | 'PARSING' | 'PUBLISHED' | 'FAILED'
+type StatusTagType = 'default' | 'info' | 'success' | 'warning' | 'error'
+
+interface SpaceEditForm {
+  spaceName: string
+  visibility: Visibility
+  description: string
+}
+
+interface SpaceDetail extends SpaceVO {
+  visibility: Visibility
+}
+
+interface TablePagination {
+  page: number
+  pageSize: number
+  itemCount: number
+  showSizePicker: boolean
+  pageSizes: number[]
+  onChange: (page: number) => void
+  onUpdatePageSize: (pageSize: number) => void
+}
 
 const router = useRouter()
 const route = useRoute()
@@ -123,18 +148,38 @@ const showEditModal = ref(false)
 const searchKeyword = ref('')
 const filterStatus = ref<string | null>(null)
 const fileList = ref<UploadFileInfo[]>([])
-const documents = ref<any[]>([])
+const documents = ref<DocumentVO[]>([])
 
-const spaceInfo = ref<any>({
+const spaceInfo = ref<SpaceDetail>({
+  spaceId,
   spaceName: '',
   spaceCode: '',
-  visibility: 'PRIVATE',
   description: '',
+  securityLevel: 1,
+  tenantId: '',
+  visibility: 'PRIVATE',
   documentCount: 0,
   storageSize: 0,
+  createdAt: '',
+  updatedAt: '',
 })
 
-const pagination = reactive({ page: 1, pageSize: 15, itemCount: 0 })
+const pagination = reactive<TablePagination>({
+  page: 1,
+  pageSize: 15,
+  itemCount: 0,
+  showSizePicker: true,
+  pageSizes: [15, 30, 50],
+  onChange: (page: number) => {
+    pagination.page = page
+    void loadDocuments()
+  },
+  onUpdatePageSize: (pageSize: number) => {
+    pagination.pageSize = pageSize
+    pagination.page = 1
+    void loadDocuments()
+  },
+})
 
 const statusOptions = [
   { label: '草稿', value: 'DRAFT' },
@@ -151,28 +196,57 @@ const securityLevelOptions = [
 ]
 
 const uploadForm = reactive({ securityLevel: 1 })
-const editForm = reactive({ spaceName: '', visibility: 'PRIVATE', description: '' })
+const editForm = reactive<SpaceEditForm>({ spaceName: '', visibility: 'PRIVATE', description: '' })
 
-const statusMap: Record<string, { type: 'default' | 'info' | 'success' | 'warning' | 'error', text: string }> = {
+const statusMap: Record<DocumentStatusKey, { type: StatusTagType; text: string }> = {
   DRAFT: { type: 'default', text: '草稿' },
   PARSING: { type: 'info', text: '解析中' },
   PUBLISHED: { type: 'success', text: '已发布' },
   FAILED: { type: 'error', text: '失败' },
 }
 
-const documentColumns: DataTableColumns = [
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+  return fallback
+}
+
+function normalizeDocumentStatus(status?: DocumentVO['status']): DocumentStatusKey | string {
+  if (status === 0 || status === '0') return 'DRAFT'
+  if (status === 1 || status === '1') return 'PUBLISHED'
+  if (status === 2 || status === '2') return 'FAILED'
+  if (typeof status === 'string') return status
+  return 'DRAFT'
+}
+
+const documentColumns: DataTableColumns<DocumentVO> = [
   { title: '文档名称', key: 'documentName', ellipsis: { tooltip: true }, minWidth: 200 },
   { title: '类型', key: 'documentType', width: 80 },
-  { title: '大小', key: 'fileSize', width: 100, render: (row: any) => formatSize(row.fileSize) },
-  { title: '密级', key: 'securityLevel', width: 70, render: (row: any) => h(NTag, { size: 'small' }, () => `L${row.securityLevel}`) },
-  { title: '状态', key: 'status', width: 90, render: (row: any) => h(NTag, { size: 'small', type: statusMap[row.status]?.type || 'default' }, () => statusMap[row.status]?.text || row.status) },
+  { title: '大小', key: 'fileSize', width: 100, render: (row: DocumentVO) => formatSize(row.fileSize || 0) },
+  { title: '密级', key: 'securityLevel', width: 70, render: (row: DocumentVO) => h(NTag, { size: 'small' }, () => `L${row.securityLevel ?? 1}`) },
+  {
+    title: '状态',
+    key: 'status',
+    width: 90,
+    render: (row: DocumentVO) => {
+      const normalizedStatus = normalizeDocumentStatus(row.status)
+      const mappedStatus = statusMap[normalizedStatus as DocumentStatusKey]
+      return h(
+        NTag,
+        { size: 'small', type: mappedStatus?.type || 'default' },
+        () => mappedStatus?.text || String(normalizedStatus),
+      )
+    },
+  },
   { title: '创建时间', key: 'createdAt', width: 170 },
   {
     title: '操作', key: 'actions', width: 180, fixed: 'right',
-    render: (row: any) =>
+    render: (row: DocumentVO) =>
       h(NSpace, null, () => [
         h(NButton, { size: 'small', onClick: () => router.push(`/knowledge/document/${row.documentId}`) }, () => '详情'),
-        row.status === 'DRAFT' && h(NButton, { size: 'small', type: 'primary', onClick: () => handleParse(row) }, () => '解析'),
+        normalizeDocumentStatus(row.status) === 'DRAFT' &&
+          h(NButton, { size: 'small', type: 'primary', onClick: () => handleParse(row) }, () => '解析'),
         h(NButton, { size: 'small', type: 'error', onClick: () => handleDelete(row) }, () => '删除'),
       ]),
   },
@@ -187,22 +261,26 @@ function formatSize(bytes: number): string {
 
 async function loadSpaceInfo() {
   try {
-    const res: any = await spaceApi.get(spaceId)
-    spaceInfo.value = res.data || {}
+    const res = await spaceApi.get(spaceId)
+    spaceInfo.value = {
+      ...spaceInfo.value,
+      ...res.data,
+      visibility: (res.data?.visibility as Visibility) || 'PRIVATE',
+    }
     Object.assign(editForm, {
       spaceName: res.data?.spaceName || '',
-      visibility: res.data?.visibility || 'PRIVATE',
+      visibility: (res.data?.visibility as Visibility) || 'PRIVATE',
       description: res.data?.description || '',
     })
-  } catch (e: any) {
-    message.error(e.message || '加载失败')
+  } catch (error: unknown) {
+    message.error(getErrorMessage(error, '加载失败'))
   }
 }
 
 async function loadDocuments() {
   loading.value = true
   try {
-    const res: any = await documentApi.list({
+    const res = await documentApi.list({
       page: pagination.page,
       pageSize: pagination.pageSize,
       spaceId,
@@ -211,8 +289,8 @@ async function loadDocuments() {
     })
     documents.value = res.data?.records || []
     pagination.itemCount = res.data?.total || 0
-  } catch (e: any) {
-    message.error(e.message || '加载失败')
+  } catch (error: unknown) {
+    message.error(getErrorMessage(error, '加载失败'))
   } finally {
     loading.value = false
   }
@@ -234,10 +312,10 @@ async function handleUpload() {
     message.success('上传成功，文档正在解析中...')
     showUploadModal.value = false
     fileList.value = []
-    loadDocuments()
-    loadSpaceInfo()
-  } catch (e: any) {
-    message.error(e.message || '上传失败')
+    void loadDocuments()
+    void loadSpaceInfo()
+  } catch (error: unknown) {
+    message.error(getErrorMessage(error, '上传失败'))
   } finally {
     uploading.value = false
   }
@@ -253,38 +331,48 @@ async function handleSaveSpace() {
     await spaceApi.update({ ...editForm, spaceId })
     message.success('保存成功')
     showEditModal.value = false
-    loadSpaceInfo()
-  } catch (e: any) {
-    message.error(e.message || '保存失败')
+    void loadSpaceInfo()
+  } catch (error: unknown) {
+    message.error(getErrorMessage(error, '保存失败'))
   } finally {
     saving.value = false
   }
 }
 
-async function handleParse(row: any) {
+async function handleParse(row: DocumentVO) {
   try {
     await parseApi.submit({ documentId: row.documentId, spaceId })
     message.success('已提交解析任务')
-    loadDocuments()
-  } catch (e: any) {
-    message.error(e.message || '提交失败')
+    void loadDocuments()
+  } catch (error: unknown) {
+    message.error(getErrorMessage(error, '提交失败'))
   }
 }
 
-async function handleDelete(row: any) {
+async function handleDelete(row: DocumentVO) {
+  if (row.id === undefined) {
+    message.error('缺少文档主键，无法删除')
+    return
+  }
+
   try {
     await documentApi.delete(row.id)
     message.success('删除成功')
-    loadDocuments()
-    loadSpaceInfo()
-  } catch (e: any) {
-    message.error(e.message || '删除失败')
+    void loadDocuments()
+    void loadSpaceInfo()
+  } catch (error: unknown) {
+    message.error(getErrorMessage(error, '删除失败'))
   }
 }
 
+watch([searchKeyword, filterStatus], () => {
+  pagination.page = 1
+  void loadDocuments()
+})
+
 onMounted(() => {
-  loadSpaceInfo()
-  loadDocuments()
+  void loadSpaceInfo()
+  void loadDocuments()
 })
 </script>
 

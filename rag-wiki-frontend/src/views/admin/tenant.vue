@@ -56,16 +56,38 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted, h } from 'vue'
-import { useMessage, NTag, NButton, NSpace } from 'naive-ui'
+import { useMessage, NTag, NButton, NSpace, type DataTableColumns } from 'naive-ui'
+import { tenantApi } from '@/api'
 
 const message = useMessage()
 const loading = ref(false)
-const tenantList = ref<any[]>([])
+
+type IsolationLevel = 'METADATA_FILTER' | 'PARTITION' | 'COLLECTION'
+
+interface TenantRow {
+  tenantId: string
+  tenantName: string
+  isolationLevel: IsolationLevel
+  maxUsers: number
+  maxSpaces: number
+  status: number
+}
+
+interface TenantForm {
+  tenantId: string
+  tenantName: string
+  isolationLevel: IsolationLevel
+  maxUsers: number
+  maxSpaces: number
+  statusBool: boolean
+}
+
+const tenantList = ref<TenantRow[]>([])
 const showModal = ref(false)
 const isEdit = ref(false)
 const keyword = ref('')
 
-const formData = reactive({
+const formData = reactive<TenantForm>({
   tenantId: '',
   tenantName: '',
   isolationLevel: 'METADATA_FILTER',
@@ -80,14 +102,14 @@ const isolationOptions = [
   { label: '集合隔离（高隔离）', value: 'COLLECTION' },
 ]
 
-const columns = [
+const columns: DataTableColumns<TenantRow> = [
   { title: '租户ID', key: 'tenantId', width: 120 },
   { title: '租户名称', key: 'tenantName' },
-  { title: '隔离级别', key: 'isolationLevel', width: 160, render: (row: any) => h(NTag, { size: 'small' }, { default: () => row.isolationLevel }) },
+  { title: '隔离级别', key: 'isolationLevel', width: 160, render: (row) => h(NTag, { size: 'small' }, { default: () => row.isolationLevel }) },
   { title: '最大用户数', key: 'maxUsers', width: 100 },
   { title: '最大空间数', key: 'maxSpaces', width: 100 },
-  { title: '状态', key: 'status', width: 80, render: (row: any) => h(NTag, { type: row.status === 1 ? 'success' : 'error', size: 'small' }, { default: () => row.status === 1 ? '启用' : '禁用' }) },
-  { title: '操作', key: 'actions', width: 140, render: (row: any) => h(NSpace, null, { default: () => [
+  { title: '状态', key: 'status', width: 80, render: (row) => h(NTag, { type: row.status === 1 ? 'success' : 'error', size: 'small' }, { default: () => row.status === 1 ? '启用' : '禁用' }) },
+  { title: '操作', key: 'actions', width: 140, render: (row) => h(NSpace, null, { default: () => [
     h(NButton, { size: 'small', onClick: () => openEditModal(row) }, { default: () => '编辑' }),
     h(NButton, { size: 'small', type: row.status === 1 ? 'error' : 'success', onClick: () => toggleStatus(row) }, { default: () => row.status === 1 ? '禁用' : '启用' }),
   ] }) },
@@ -96,9 +118,11 @@ const columns = [
 const loadData = async () => {
   loading.value = true
   try {
-    // const res = await tenantApi.list(keyword.value)
-    // tenantList.value = res.data
-  } catch (e: any) { message.error('加载失败') }
+    const res = await tenantApi.page({ pageNum: 1, pageSize: 100, tenantName: keyword.value || undefined })
+    tenantList.value = normalizeTenants(res.data?.records)
+  } catch {
+    message.error('加载失败')
+  }
   finally { loading.value = false }
 }
 
@@ -108,7 +132,7 @@ const openCreateModal = () => {
   showModal.value = true
 }
 
-const openEditModal = (row: any) => {
+const openEditModal = (row: TenantRow) => {
   isEdit.value = true
   Object.assign(formData, { ...row, statusBool: row.status === 1 })
   showModal.value = true
@@ -116,22 +140,46 @@ const openEditModal = (row: any) => {
 
 const handleSubmit = async () => {
   try {
-    // if (isEdit.value) await tenantApi.update(formData)
-    // else await tenantApi.create(formData)
+    const payload = {
+      tenantId: formData.tenantId || undefined,
+      tenantName: formData.tenantName,
+      isolationLevel: formData.isolationLevel,
+      maxUsers: formData.maxUsers,
+      maxSpaces: formData.maxSpaces,
+      status: formData.statusBool ? 1 : 0,
+    }
+    if (isEdit.value) await tenantApi.update(payload)
+    else await tenantApi.create(payload)
     message.success(isEdit.value ? '更新成功' : '创建成功')
+    showModal.value = false
     loadData()
-  } catch (e: any) { message.error('操作失败') }
+  } catch { message.error('操作失败') }
 }
 
-const toggleStatus = async (row: any) => {
+const toggleStatus = async (row: TenantRow) => {
   try {
-    // await tenantApi.updateStatus(row.tenantId, row.status === 1 ? 0 : 1)
+    await tenantApi.toggleStatus(row.tenantId, row.status === 1 ? 0 : 1)
     message.success('状态更新成功')
     loadData()
-  } catch (e: any) { message.error('操作失败') }
+  } catch { message.error('操作失败') }
 }
 
 onMounted(() => { loadData() })
+
+function normalizeTenants(records: unknown): TenantRow[] {
+  if (!Array.isArray(records)) return []
+  return records.map((item) => {
+    const row = item as Partial<TenantRow>
+    return {
+      tenantId: row.tenantId || '',
+      tenantName: row.tenantName || '',
+      isolationLevel: (row.isolationLevel as IsolationLevel) || 'METADATA_FILTER',
+      maxUsers: Number(row.maxUsers || 0),
+      maxSpaces: Number(row.maxSpaces || 0),
+      status: Number(row.status ?? 1),
+    }
+  })
+}
 </script>
 
 <style scoped>

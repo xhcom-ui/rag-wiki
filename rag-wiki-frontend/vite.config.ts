@@ -25,6 +25,17 @@ export default defineConfig(({ mode }) => {
       outDir: 'dist',
       sourcemap: false,
       chunkSizeWarningLimit: 1500,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            'vendor': ['vue', 'vue-router', 'pinia'],
+            'naive-ui': ['naive-ui'],
+            'echarts': ['echarts', 'vue-echarts'],
+            'vditor': ['vditor'],
+            'axios': ['axios'],
+          }
+        }
+      }
     },
   }
 })

@@ -28,6 +28,12 @@ import { ref, reactive, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useMessage } from 'naive-ui'
 import { documentApi, spaceApi } from '@/api'
+import type { DocumentVO, SpaceVO } from '@/types/api'
+
+interface VditorInstance {
+  getValue: () => string
+  destroy: () => void
+}
 
 const router = useRouter()
 const route = useRoute()
@@ -35,8 +41,8 @@ const message = useMessage()
 
 const saving = ref(false)
 const isEdit = ref(false)
-const vditorRef = ref<any>(null)
-let vditorInstance: any = null
+const vditorRef = ref<HTMLDivElement | null>(null)
+let vditorInstance: VditorInstance | null = null
 
 const formData = reactive({
   title: '',
@@ -47,14 +53,25 @@ const formData = reactive({
 
 const spaceOptions = ref<{ label: string; value: string }[]>([])
 
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+  return fallback
+}
+
 onMounted(async () => {
   // 加载空间列表
   try {
-    const res: any = await spaceApi.list({})
-    spaceOptions.value = (res.data?.records || res.data?.list || []).map((s: any) => ({
-      label: s.spaceName, value: s.spaceId
+    const res = await spaceApi.list({})
+    const spaces = res.data?.records || []
+    spaceOptions.value = spaces.map((space: SpaceVO) => ({
+      label: space.spaceName,
+      value: space.spaceId,
     }))
-  } catch (e) { /* ignore */ }
+  } catch {
+    // ignore
+  }
 
   // 如果是编辑模式，加载文档内容
   const docId = route.params.id as string
@@ -62,11 +79,14 @@ onMounted(async () => {
     isEdit.value = true
     formData.documentId = docId
     try {
-      const res: any = await documentApi.get(docId)
-      formData.title = res.data?.documentName || ''
-      formData.spaceId = res.data?.spaceId || ''
-      formData.content = res.data?.content || ''
-    } catch (e) { /* ignore */ }
+      const res = await documentApi.get(docId)
+      const document = res.data as DocumentVO
+      formData.title = document.documentName || ''
+      formData.spaceId = document.spaceId || ''
+      formData.content = document.content || document.documentContent || ''
+    } catch {
+      // ignore
+    }
   }
 
   // 初始化Vditor
@@ -97,9 +117,6 @@ function initVditor() {
         'undo', 'redo', '|',
         'fullscreen', 'preview',
       ],
-      after: () => {
-        console.log('Vditor initialized')
-      },
     })
   })
 }
@@ -132,8 +149,8 @@ async function handleSave() {
       message.success('文档创建成功')
     }
     router.back()
-  } catch (e: any) {
-    message.error(e.message || '保存失败')
+  } catch (error: unknown) {
+    message.error(getErrorMessage(error, '保存失败'))
   } finally {
     saving.value = false
   }

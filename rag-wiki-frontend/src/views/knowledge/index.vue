@@ -59,8 +59,8 @@
               <n-statistic label="文档" :value="space.documentCount || 0" />
               <n-statistic label="向量" :value="space.vectorCount || 0" />
             </n-space>
-            <n-dropdown :options="getActionOptions(space)" @select="(key) => handleAction(key, space)">
-              <n-button text>
+            <n-dropdown :options="getActionOptions()" @select="(key) => handleAction(key, space)">
+              <n-button text @click.stop>
                 <template #icon><n-icon><EllipsisHorizontalOutline /></n-icon></template>
               </n-button>
             </n-dropdown>
@@ -69,7 +69,7 @@
           <template #footer>
             <n-space justify="space-between" align="center">
               <n-text depth="3" style="font-size: 12px">
-                更新于 {{ formatTime(space.updatedAt) }}
+                更新于 {{ formatTime(space.updatedAt || '') }}
               </n-text>
               <n-avatar-group :options="space.members?.slice(0, 3).map((m: any) => ({
                 src: m.avatar,
@@ -164,15 +164,42 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, h } from 'vue'
 import { useRouter } from 'vue-router'
-import { useMessage } from 'naive-ui'
+import { useMessage, type DropdownOption, type FormInst } from 'naive-ui'
 import {
   BookOutline, AddOutline, AddCircleOutline, SearchOutline,
   EllipsisHorizontalOutline, PencilOutline, TrashOutline, PeopleOutline,
 } from '@vicons/ionicons5'
 import { spaceApi } from '@/api'
+import type { SpaceVO } from '@/types/api'
 
 const router = useRouter()
 const message = useMessage()
+
+type SecurityTagType = 'success' | 'info' | 'warning' | 'error' | 'default'
+
+interface SpaceMember {
+  avatar?: string
+}
+
+interface SpaceRow extends Partial<SpaceVO> {
+  id?: number
+  spaceId: string
+  spaceName: string
+  description?: string
+  securityLevel: number
+  visibility?: string
+  documentCount?: number
+  vectorCount?: number
+  updatedAt?: string
+  members?: SpaceMember[]
+}
+
+interface SpaceForm {
+  spaceName: string
+  description: string
+  securityLevel: number
+  visibility: string
+}
 
 // 搜索表单
 const searchForm = reactive({
@@ -196,7 +223,7 @@ const visibilityOptions = [
 ]
 
 // 知识库列表
-const spaceList = ref<any[]>([])
+const spaceList = ref<SpaceRow[]>([])
 const loading = ref(false)
 const pagination = reactive({
   page: 1,
@@ -208,10 +235,10 @@ const pagination = reactive({
 const modalVisible = ref(false)
 const isEdit = ref(false)
 const submitLoading = ref(false)
-const formRef = ref<any>(null)
+const formRef = ref<FormInst | null>(null)
 const currentSpaceId = ref('')
 
-const formData = reactive({
+const formData = reactive<SpaceForm>({
   spaceName: '',
   description: '',
   securityLevel: 1,
@@ -229,13 +256,13 @@ function getSecurityLevelLabel(level: number): string {
   return map[level] || '未知'
 }
 
-function getSecurityLevelType(level: number): string {
-  const map: Record<number, string> = { 1: 'success', 2: 'info', 3: 'warning', 4: 'error' }
+function getSecurityLevelType(level: number): SecurityTagType {
+  const map: Record<number, SecurityTagType> = { 1: 'success', 2: 'info', 3: 'warning', 4: 'error' }
   return map[level] || 'default'
 }
 
 // 获取操作选项
-function getActionOptions(space: any) {
+function getActionOptions(): DropdownOption[] {
   return [
     {
       label: '编辑',
@@ -281,18 +308,18 @@ function formatTime(dateStr: string): string {
 async function loadData() {
   loading.value = true
   try {
-    const params: any = {
+    const params: Record<string, string | number | undefined> = {
       pageNum: pagination.page,
       pageSize: pagination.pageSize,
       keyword: searchForm.keyword || undefined,
       securityLevel: searchForm.securityLevel ?? undefined,
     }
-    const res: any = await spaceApi.list(params)
+    const res = await spaceApi.list(params)
     if (res.code === 200) {
-      spaceList.value = res.data.records || []
+      spaceList.value = (res.data.records || []).map(normalizeSpace)
       pagination.total = res.data.total || 0
     }
-  } catch (error) {
+  } catch {
     message.error('加载知识库列表失败')
   } finally {
     loading.value = false
@@ -326,7 +353,7 @@ function handlePageSizeChange(size: number) {
 }
 
 // 查看知识库
-function handleViewSpace(space: any) {
+function handleViewSpace(space: SpaceRow) {
   router.push(`/knowledge/${space.spaceId}`)
 }
 
@@ -338,7 +365,7 @@ function handleCreate() {
 }
 
 // 编辑知识库
-function handleEdit(space: any) {
+function handleEdit(space: SpaceRow) {
   isEdit.value = true
   currentSpaceId.value = space.spaceId
   Object.assign(formData, {
@@ -351,20 +378,25 @@ function handleEdit(space: any) {
 }
 
 // 删除知识库
-async function handleDelete(space: any) {
+async function handleDelete(space: SpaceRow) {
   try {
-    const res: any = await spaceApi.delete(space.id)
+    const deleteId = space.id ?? Number(space.spaceId)
+    if (!Number.isFinite(deleteId)) {
+      message.error('缺少知识库主键，无法删除')
+      return
+    }
+    const res = await spaceApi.delete(deleteId)
     if (res.code === 200) {
       message.success('删除成功')
-      loadData()
+      await loadData()
     }
-  } catch (error) {
+  } catch {
     message.error('删除失败')
   }
 }
 
 // 操作处理
-function handleAction(key: string, space: any) {
+function handleAction(key: string, space: SpaceRow) {
   switch (key) {
     case 'edit':
       handleEdit(space)
@@ -380,29 +412,24 @@ function handleAction(key: string, space: any) {
 
 // 提交表单
 async function handleSubmit() {
-  formRef.value?.validate(async (errors: any) => {
-    if (errors) return
+  await formRef.value?.validate()
 
-    submitLoading.value = true
-    try {
-      let res: any
-      if (isEdit.value) {
-        res = await spaceApi.update({ ...formData, spaceId: currentSpaceId.value })
-      } else {
-        res = await spaceApi.create(formData)
-      }
+  submitLoading.value = true
+  try {
+    const res = isEdit.value
+      ? await spaceApi.update({ ...formData, spaceId: currentSpaceId.value })
+      : await spaceApi.create(formData)
 
-      if (res.code === 200) {
-        message.success(isEdit.value ? '更新成功' : '创建成功')
-        modalVisible.value = false
-        loadData()
-      }
-    } catch (error) {
-      message.error(isEdit.value ? '更新失败' : '创建失败')
-    } finally {
-      submitLoading.value = false
+    if (res.code === 200) {
+      message.success(isEdit.value ? '更新成功' : '创建成功')
+      modalVisible.value = false
+      await loadData()
     }
-  })
+  } catch {
+    message.error(isEdit.value ? '更新失败' : '创建失败')
+  } finally {
+    submitLoading.value = false
+  }
 }
 
 // 重置表单
@@ -416,6 +443,21 @@ function resetForm() {
 onMounted(() => {
   loadData()
 })
+
+function normalizeSpace(space: SpaceVO): SpaceRow {
+  return {
+    id: undefined,
+    spaceId: space.spaceId,
+    spaceName: space.spaceName,
+    description: space.description,
+    securityLevel: space.securityLevel,
+    visibility: space.visibility,
+    documentCount: Number((space as SpaceVO & { documentCount?: number }).documentCount || 0),
+    vectorCount: Number((space as SpaceVO & { vectorCount?: number }).vectorCount || 0),
+    updatedAt: space.updatedAt,
+    members: space.members?.map((member) => ({ avatar: member.avatar })),
+  }
+}
 </script>
 
 <style scoped>

@@ -92,30 +92,49 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted, h } from 'vue'
-import { useMessage } from 'naive-ui'
+import { NButton, NPopconfirm, NSpace, useMessage, type DataTableColumns, type FormInst } from 'naive-ui'
 import { AddOutline, ShieldCheckmarkOutline, TrashOutline } from '@vicons/ionicons5'
 import { roleApi, rolePermissionApi } from '@/api'
 
+interface RoleRow {
+  id?: number
+  roleId: string
+  roleName: string
+  roleCode: string
+  description?: string
+  createdAt?: string
+  permissions?: string[]
+}
+
+interface RoleForm {
+  roleName: string
+  roleCode: string
+  description: string
+}
+
+interface PermissionNode {
+  key: string
+  label: string
+  children?: PermissionNode[]
+}
+
 const message = useMessage()
 
-// 搜索表单
 const searchForm = reactive({
   keyword: '',
 })
 
-// 表格数据
-const tableData = ref<any[]>([])
+const tableData = ref<RoleRow[]>([])
 const loading = ref(false)
 
-// 弹窗相关
 const modalVisible = ref(false)
 const modalTitle = ref('新增角色')
 const isEdit = ref(false)
 const submitLoading = ref(false)
-const formRef = ref<any>(null)
+const formRef = ref<FormInst | null>(null)
 const currentRoleId = ref('')
 
-const formData = reactive({
+const formData = reactive<RoleForm>({
   roleName: '',
   roleCode: '',
   description: '',
@@ -126,13 +145,11 @@ const formRules = {
   roleCode: [{ required: true, message: '请输入角色编码', trigger: 'blur' }],
 }
 
-// 权限配置弹窗
 const permissionModalVisible = ref(false)
-const menuTreeData = ref<any[]>([])
+const menuTreeData = ref<PermissionNode[]>([])
 const selectedPermissions = ref<string[]>([])
 
-// 表格列定义
-const columns = [
+const columns: DataTableColumns<RoleRow> = [
   { title: '角色名称', key: 'roleName', width: 150 },
   { title: '角色编码', key: 'roleCode', width: 150 },
   { title: '描述', key: 'description', ellipsis: { tooltip: true } },
@@ -142,25 +159,17 @@ const columns = [
     key: 'actions',
     width: 200,
     fixed: 'right',
-    render(row: any) {
-      return h('n-space', null, {
+    render: (row) =>
+      h(NSpace, null, {
         default: () => [
+          h(NButton, { size: 'small', onClick: () => handleEdit(row) }, { default: () => '编辑' }),
+          h(NButton, { size: 'small', type: 'info', onClick: () => handleConfigPermission(row) }, { default: () => '配置权限', icon: () => h(ShieldCheckmarkOutline) }),
           h(
-            'n-button',
-            { size: 'small', onClick: () => handleEdit(row) },
-            { default: () => '编辑' }
-          ),
-          h(
-            'n-button',
-            { size: 'small', type: 'info', onClick: () => handleConfigPermission(row) },
-            { default: () => '配置权限', icon: () => h(ShieldCheckmarkOutline) }
-          ),
-          h(
-            'n-popconfirm',
+            NPopconfirm,
             { onPositiveClick: () => handleDelete(row) },
             {
               trigger: () =>
-                h('n-button', { size: 'small', type: 'error' }, {
+                h(NButton, { size: 'small', type: 'error' }, {
                   default: () => '删除',
                   icon: () => h(TrashOutline),
                 }),
@@ -168,46 +177,42 @@ const columns = [
             }
           ),
         ],
-      })
-    },
+      }),
   },
 ]
 
-// 加载角色数据
 async function loadData() {
   loading.value = true
   try {
-    const res: any = await roleApi.list()
+    const res = await roleApi.list()
     if (res.code === 200) {
-      tableData.value = res.data || []
+      tableData.value = Array.isArray(res.data) ? (res.data as RoleRow[]) : []
     }
-  } catch (error) {
+  } catch {
     message.error('加载角色列表失败')
   } finally {
     loading.value = false
   }
 }
 
-// 搜索
 function handleSearch() {
-  if (searchForm.keyword) {
-    tableData.value = tableData.value.filter(
-      (item) =>
-        item.roleName.includes(searchForm.keyword) ||
-        item.roleCode.includes(searchForm.keyword)
-    )
-  } else {
+  if (!searchForm.keyword) {
     loadData()
+    return
   }
+
+  tableData.value = tableData.value.filter(
+    (item) =>
+      item.roleName.includes(searchForm.keyword) ||
+      item.roleCode.includes(searchForm.keyword)
+  )
 }
 
-// 重置
 function handleReset() {
   searchForm.keyword = ''
   loadData()
 }
 
-// 新增
 function handleAdd() {
   isEdit.value = false
   modalTitle.value = '新增角色'
@@ -215,42 +220,39 @@ function handleAdd() {
   modalVisible.value = true
 }
 
-// 编辑
-function handleEdit(row: any) {
+function handleEdit(row: RoleRow) {
   isEdit.value = true
   modalTitle.value = '编辑角色'
   currentRoleId.value = row.roleId
   Object.assign(formData, {
     roleName: row.roleName,
     roleCode: row.roleCode,
-    description: row.description,
+    description: row.description || '',
   })
   modalVisible.value = true
 }
 
-// 删除
-async function handleDelete(row: any) {
+async function handleDelete(row: RoleRow) {
   try {
-    const res: any = await roleApi.delete(row.id)
+    const deleteId = row.id ?? Number(row.roleId)
+    if (!Number.isFinite(deleteId)) {
+      message.error('缺少角色主键，无法删除')
+      return
+    }
+    const res = await roleApi.delete(deleteId)
     if (res.code === 200) {
       message.success('删除成功')
       loadData()
     }
-  } catch (error) {
+  } catch {
     message.error('删除失败')
   }
 }
 
-// 配置权限
-async function handleConfigPermission(row: any) {
+async function handleConfigPermission(row: RoleRow) {
   currentRoleId.value = row.roleId
-  // 加载菜单数据
   menuTreeData.value = [
-    {
-      key: 'dashboard',
-      label: '仪表盘',
-      children: [],
-    },
+    { key: 'dashboard', label: '仪表盘', children: [] },
     {
       key: 'knowledge',
       label: '知识库管理',
@@ -282,67 +284,57 @@ async function handleConfigPermission(row: any) {
       ],
     },
   ]
-  
-  // 加载角色已有权限
+
   try {
-    const res: any = await rolePermissionApi.getRolePermissions(row.roleId)
-    if (res.code === 200) {
-      selectedPermissions.value = res.data || []
-    }
-  } catch (error) {
+    const res = await rolePermissionApi.getRolePermissions(row.roleId)
+    selectedPermissions.value = Array.isArray(res.data) ? (res.data as string[]) : []
+  } catch {
     selectedPermissions.value = row.permissions || []
   }
-  
+
   permissionModalVisible.value = true
 }
 
-// 权限选择变化
 function handlePermissionChange(keys: string[]) {
   selectedPermissions.value = keys
 }
 
-// 保存权限
 async function handleSavePermissions() {
   try {
-    const res: any = await rolePermissionApi.saveRolePermissions(currentRoleId.value, selectedPermissions.value)
+    const res = await rolePermissionApi.saveRolePermissions(currentRoleId.value, selectedPermissions.value)
     if (res.code === 200) {
       message.success('权限配置保存成功')
       permissionModalVisible.value = false
       loadData()
     }
-  } catch (error) {
+  } catch {
     message.error('保存失败')
   }
 }
 
-// 提交表单
 async function handleSubmit() {
-  formRef.value?.validate(async (errors: any) => {
-    if (errors) return
+  await formRef.value?.validate()
 
-    submitLoading.value = true
-    try {
-      let res: any
-      if (isEdit.value) {
-        res = await roleApi.update({ ...formData, roleId: currentRoleId.value })
-      } else {
-        res = await roleApi.create(formData)
-      }
-
-      if (res.code === 200) {
-        message.success(isEdit.value ? '更新成功' : '创建成功')
-        modalVisible.value = false
-        loadData()
-      }
-    } catch (error) {
-      message.error(isEdit.value ? '更新失败' : '创建失败')
-    } finally {
-      submitLoading.value = false
+  submitLoading.value = true
+  try {
+    const payload = {
+      ...formData,
+      status: 1,
+      roleId: currentRoleId.value || undefined,
     }
-  })
+    const res = isEdit.value ? await roleApi.update(payload) : await roleApi.create(payload)
+    if (res.code === 200) {
+      message.success(isEdit.value ? '更新成功' : '创建成功')
+      modalVisible.value = false
+      loadData()
+    }
+  } catch {
+    message.error(isEdit.value ? '更新失败' : '创建失败')
+  } finally {
+    submitLoading.value = false
+  }
 }
 
-// 重置表单
 function resetForm() {
   formData.roleName = ''
   formData.roleCode = ''

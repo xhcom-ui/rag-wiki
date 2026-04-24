@@ -12,7 +12,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, defineComponent, h, onMounted, onUnmounted } from 'vue'
+import { ref, defineComponent, onMounted, onUnmounted } from 'vue'
 import { useMessage, useLoadingBar } from 'naive-ui'
 import { setGlobalMessage, onGlobalLoading } from './api'
 

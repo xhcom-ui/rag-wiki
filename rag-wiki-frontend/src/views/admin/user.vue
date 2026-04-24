@@ -42,7 +42,7 @@
       :pagination="pagination"
       @update:page="handlePageChange"
       @update:page-size="handlePageSizeChange"
-      row-key="id"
+      row-key="userId"
     />
 
     <!-- 新增/编辑弹窗 -->
@@ -143,12 +143,46 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted, h } from 'vue'
-import { useMessage, useDialog } from 'naive-ui'
-import { AddOutline, KeyOutline, PeopleOutline } from '@vicons/ionicons5'
+import { NButton, NPopconfirm, NSpace, NSwitch, NTag, useMessage, type DataTableColumns, type FormInst, type TreeSelectOption } from 'naive-ui'
+import { AddOutline, PeopleOutline } from '@vicons/ionicons5'
 import { userApi, roleApi, deptApi, rolePermissionApi } from '@/api'
+import type { DeptVO, UserVO } from '@/types/api'
+
+interface UserRow {
+  id?: number
+  userId: string
+  username: string
+  realName: string
+  deptId?: string | null
+  deptName?: string
+  email?: string
+  phone?: string
+  roleIds?: string[]
+  securityLevel: number
+  status: number
+}
+
+interface UserForm {
+  username: string
+  password: string
+  realName: string
+  email: string
+  phone: string
+  deptId: string | null
+  roleIds: string[]
+  securityLevel: number
+  status: number
+}
+
+interface DeptNode {
+  deptId: string
+  deptName: string
+  children?: DeptNode[]
+}
+
+type DeptOption = { label: string; value: string }
 
 const message = useMessage()
-const dialog = useDialog()
 
 // 搜索表单
 const searchForm = reactive({
@@ -158,8 +192,8 @@ const searchForm = reactive({
 })
 
 // 部门选项
-const deptOptions = ref<{ label: string; value: string }[]>([])
-const deptTreeOptions = ref<any[]>([])
+const deptOptions = ref<DeptOption[]>([])
+const deptTreeOptions = ref<TreeSelectOption[]>([])
 
 // 角色选项
 const roleOptions = ref<{ label: string; value: string }[]>([])
@@ -171,7 +205,7 @@ const statusOptions = [
 ]
 
 // 表格数据
-const tableData = ref<any[]>([])
+const tableData = ref<UserRow[]>([])
 const loading = ref(false)
 const pagination = reactive({
   page: 1,
@@ -186,10 +220,10 @@ const modalVisible = ref(false)
 const modalTitle = ref('新增用户')
 const isEdit = ref(false)
 const submitLoading = ref(false)
-const formRef = ref<any>(null)
+const formRef = ref<FormInst | null>(null)
 const currentUserId = ref('')
 
-const formData = reactive({
+const formData = reactive<UserForm>({
   username: '',
   password: '',
   realName: '',
@@ -217,13 +251,13 @@ function getSecurityLevelLabel(level: number): string {
   return map[level] || '未知'
 }
 
-function getSecurityLevelType(level: number): string {
-  const map: Record<number, string> = { 1: 'success', 2: 'info', 3: 'warning', 4: 'error' }
+function getSecurityLevelType(level: number): 'success' | 'info' | 'warning' | 'error' | 'default' {
+  const map: Record<number, 'success' | 'info' | 'warning' | 'error'> = { 1: 'success', 2: 'info', 3: 'warning', 4: 'error' }
   return map[level] || 'default'
 }
 
 // 表格列定义
-const columns = [
+const columns: DataTableColumns<UserRow> = [
   { title: '用户名', key: 'username', width: 120 },
   { title: '真实姓名', key: 'realName', width: 100 },
   { title: '部门', key: 'deptName', width: 120 },
@@ -233,9 +267,9 @@ const columns = [
     title: '安全等级',
     key: 'securityLevel',
     width: 100,
-    render(row: any) {
+    render(row) {
       return h(
-        'n-tag',
+        NTag,
         { type: getSecurityLevelType(row.securityLevel), size: 'small' },
         { default: () => getSecurityLevelLabel(row.securityLevel) }
       )
@@ -246,9 +280,9 @@ const columns = [
     key: 'status',
     width: 80,
     align: 'center',
-    render(row: any) {
+    render(row) {
       return h(
-        'n-switch',
+        NSwitch,
         {
           value: row.status === 1,
           size: 'small',
@@ -267,25 +301,25 @@ const columns = [
     key: 'actions',
     width: 200,
     fixed: 'right',
-    render(row: any) {
-      return h('n-space', null, {
+    render(row) {
+      return h(NSpace, null, {
         default: () => [
           h(
-            'n-button',
+            NButton,
             { size: 'small', onClick: () => handleEdit(row) },
             { default: () => '编辑' }
           ),
           h(
-            'n-button',
+            NButton,
             { size: 'small', onClick: () => handleAssignRole(row) },
             { default: () => '分配角色', icon: () => h(PeopleOutline) }
           ),
           h(
-            'n-popconfirm',
+            NPopconfirm,
             { onPositiveClick: () => handleDelete(row) },
             {
               trigger: () =>
-                h('n-button', { size: 'small', type: 'error' }, { default: () => '删除' }),
+                h(NButton, { size: 'small', type: 'error' }, { default: () => '删除' }),
               default: () => '确定删除该用户吗？',
             }
           ),
@@ -298,12 +332,12 @@ const columns = [
 // 加载部门数据
 async function loadDepts() {
   try {
-    const res: any = await deptApi.tree()
+    const res = await deptApi.tree()
     if (res.code === 200) {
-      deptTreeOptions.value = res.data || []
-      // 扁平化选项
-      const flatten = (nodes: any[]): any[] => {
-        return nodes.reduce((acc, node) => {
+      const nodes = Array.isArray(res.data) ? normalizeDeptNodes(res.data as DeptVO[]) : []
+      deptTreeOptions.value = nodes.map(convertDeptToTreeOption)
+      const flatten = (items: DeptNode[]): DeptOption[] => {
+        return items.reduce<DeptOption[]>((acc, node) => {
           acc.push({ label: node.deptName, value: node.deptId })
           if (node.children) {
             acc.push(...flatten(node.children))
@@ -311,7 +345,7 @@ async function loadDepts() {
           return acc
         }, [])
       }
-      deptOptions.value = flatten(res.data || [])
+      deptOptions.value = flatten(nodes)
     }
   } catch (error) {
     console.error('加载部门失败', error)
@@ -321,9 +355,9 @@ async function loadDepts() {
 // 加载角色数据
 async function loadRoles() {
   try {
-    const res: any = await roleApi.list()
+    const res = await roleApi.list()
     if (res.code === 200) {
-      roleOptions.value = (res.data || []).map((r: any) => ({
+      roleOptions.value = (Array.isArray(res.data) ? res.data : []).map((r) => ({
         label: r.roleName,
         value: r.roleId,
       }))
@@ -337,19 +371,19 @@ async function loadRoles() {
 async function loadData() {
   loading.value = true
   try {
-    const params: any = {
+    const params: Record<string, string | number | undefined> = {
       pageNum: pagination.page,
       pageSize: pagination.pageSize,
       keyword: searchForm.keyword || undefined,
       deptId: searchForm.deptId || undefined,
       status: searchForm.status ?? undefined,
     }
-    const res: any = await userApi.list(params)
+    const res = await userApi.list(params)
     if (res.code === 200) {
-      tableData.value = res.data.records || []
+      tableData.value = (res.data.records || []).map(normalizeUserRow)
       pagination.itemCount = res.data.total || 0
     }
-  } catch (error) {
+  } catch {
     message.error('加载用户列表失败')
   } finally {
     loading.value = false
@@ -392,7 +426,7 @@ function handleAdd() {
 }
 
 // 编辑
-function handleEdit(row: any) {
+function handleEdit(row: UserRow) {
   isEdit.value = true
   modalTitle.value = '编辑用户'
   currentUserId.value = row.userId
@@ -410,39 +444,44 @@ function handleEdit(row: any) {
 }
 
 // 状态变更
-async function handleStatusChange(row: any, enabled: boolean) {
+async function handleStatusChange(row: UserRow, enabled: boolean) {
   try {
     await userApi.update({ ...row, status: enabled ? 1 : 0 })
     message.success('状态更新成功')
     loadData()
-  } catch (error) {
+  } catch {
     message.error('状态更新失败')
   }
 }
 
 // 删除
-async function handleDelete(row: any) {
+async function handleDelete(row: UserRow) {
   try {
-    const res: any = await userApi.delete(row.id)
+    const deleteId = row.id ?? Number(row.userId)
+    if (!Number.isFinite(deleteId)) {
+      message.error('缺少用户主键，无法删除')
+      return
+    }
+    const res = await userApi.delete(deleteId)
     if (res.code === 200) {
       message.success('删除成功')
       loadData()
     }
-  } catch (error) {
+  } catch {
     message.error('删除失败')
   }
 }
 
 // 分配角色
-async function handleAssignRole(row: any) {
+async function handleAssignRole(row: UserRow) {
   currentUserId.value = row.userId
   // 加载用户已有角色
   try {
-    const res: any = await rolePermissionApi.getUserRoles(row.userId)
+    const res = await rolePermissionApi.getUserRoles(row.userId)
     if (res.code === 200) {
-      selectedRoles.value = res.data || []
+      selectedRoles.value = Array.isArray(res.data) ? (res.data as string[]) : []
     }
-  } catch (error) {
+  } catch {
     selectedRoles.value = row.roleIds || []
   }
   roleModalVisible.value = true
@@ -451,42 +490,39 @@ async function handleAssignRole(row: any) {
 // 提交角色分配
 async function handleAssignRoles() {
   try {
-    const res: any = await rolePermissionApi.saveUserRoles(currentUserId.value, selectedRoles.value)
+    const res = await rolePermissionApi.saveUserRoles(currentUserId.value, selectedRoles.value)
     if (res.code === 200) {
       message.success('角色分配成功')
       roleModalVisible.value = false
       loadData()
     }
-  } catch (error) {
+  } catch {
     message.error('角色分配失败')
   }
 }
 
 // 提交表单
 async function handleSubmit() {
-  formRef.value?.validate(async (errors: any) => {
-    if (errors) return
+  await formRef.value?.validate()
 
-    submitLoading.value = true
-    try {
-      let res: any
-      if (isEdit.value) {
-        res = await userApi.update({ ...formData, userId: currentUserId.value })
-      } else {
-        res = await userApi.create(formData)
-      }
-
-      if (res.code === 200) {
-        message.success(isEdit.value ? '更新成功' : '创建成功')
-        modalVisible.value = false
-        loadData()
-      }
-    } catch (error) {
-      message.error(isEdit.value ? '更新失败' : '创建失败')
-    } finally {
-      submitLoading.value = false
+  submitLoading.value = true
+  try {
+    const payload = {
+      ...formData,
+      userId: currentUserId.value || undefined,
     }
-  })
+    const res = isEdit.value ? await userApi.update(payload) : await userApi.create(payload)
+
+    if (res.code === 200) {
+      message.success(isEdit.value ? '更新成功' : '创建成功')
+      modalVisible.value = false
+      loadData()
+    }
+  } catch {
+    message.error(isEdit.value ? '更新失败' : '创建失败')
+  } finally {
+    submitLoading.value = false
+  }
 }
 
 // 重置表单
@@ -500,6 +536,39 @@ function resetForm() {
   formData.roleIds = []
   formData.securityLevel = 1
   formData.status = 1
+}
+
+function convertDeptToTreeOption(node: DeptNode): TreeSelectOption {
+  return {
+    key: node.deptId,
+    label: node.deptName,
+    value: node.deptId,
+    children: node.children?.map(convertDeptToTreeOption),
+  }
+}
+
+function normalizeDeptNodes(rows: DeptVO[]): DeptNode[] {
+  return rows.map((row) => ({
+    deptId: String(row.deptId),
+    deptName: row.deptName,
+    children: row.children ? normalizeDeptNodes(row.children) : undefined,
+  }))
+}
+
+function normalizeUserRow(row: UserVO): UserRow {
+  return {
+    id: undefined,
+    userId: row.userId,
+    username: row.username,
+    realName: row.realName,
+    deptId: row.deptId != null ? String(row.deptId) : null,
+    deptName: row.deptName,
+    email: row.email,
+    phone: row.phone,
+    roleIds: row.roleIds,
+    securityLevel: row.securityLevel,
+    status: row.status,
+  }
 }
 
 onMounted(() => {

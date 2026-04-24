@@ -49,13 +49,27 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted, h } from 'vue'
-import { NButton, NSpace, NTag, useMessage } from 'naive-ui'
-import { rolePermissionApi } from '@/api'
+import { NButton, NSpace, NTag, useMessage, type DataTableColumns } from 'naive-ui'
 
 const message = useMessage()
+
+type MenuType = 'DIR' | 'MENU' | 'BUTTON'
+
+interface MenuItem {
+  menuId: string
+  menuName: string
+  path: string
+  icon: string
+  sortOrder: number
+  menuType: MenuType
+  permission: string
+  visible: boolean
+  parentId?: string
+}
+
 const showAddModal = ref(false)
-const editingMenu = ref<any>(null)
-const menuTree = ref<any[]>([])
+const editingMenu = ref<MenuItem | null>(null)
+const menuTree = ref<MenuItem[]>([])
 
 const menuForm = reactive({
   menuId: '',
@@ -63,22 +77,22 @@ const menuForm = reactive({
   path: '',
   icon: '',
   sortOrder: 0,
-  menuType: 'MENU',
+  menuType: 'MENU' as MenuType,
   permission: '',
   visible: true,
   parentId: '',
 })
 
-const columns = [
+const columns: DataTableColumns<MenuItem> = [
   { title: '菜单名称', key: 'menuName', width: 180 },
   { title: '路径', key: 'path', width: 200 },
-  { title: '类型', key: 'menuType', width: 80, render: (row: any) => h(NTag, { size: 'small', type: row.menuType === 'DIR' ? 'info' : row.menuType === 'BUTTON' ? 'warning' : 'default' }, () => row.menuType) },
+  { title: '类型', key: 'menuType', width: 80, render: (row) => h(NTag, { size: 'small', type: row.menuType === 'DIR' ? 'info' : row.menuType === 'BUTTON' ? 'warning' : 'default' }, () => row.menuType) },
   { title: '图标', key: 'icon', width: 100 },
   { title: '权限标识', key: 'permission', width: 180 },
   { title: '排序', key: 'sortOrder', width: 60 },
   {
     title: '操作', key: 'actions', width: 150,
-    render: (row: any) => h(NSpace, null, () => [
+    render: (row) => h(NSpace, null, () => [
       h(NButton, { size: 'small', onClick: () => handleEdit(row) }, () => '编辑'),
       h(NButton, { size: 'small', type: 'error', onClick: () => handleDelete(row) }, () => '删除'),
     ]),
@@ -105,13 +119,13 @@ async function loadMenus() {
   ]
 }
 
-function handleEdit(row: any) {
+function handleEdit(row: MenuItem) {
   editingMenu.value = row
   Object.assign(menuForm, row)
   showAddModal.value = true
 }
 
-function handleDelete(row: any) {
+function handleDelete(row: MenuItem) {
   message.info('删除菜单: ' + row.menuName)
 }
 
