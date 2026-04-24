@@ -1,0 +1,61 @@
+# ==================== 通用 ====================
+*.class
+*.jar
+*.war
+*.ear
+*.log
+*.gz
+*.tar
+*.zip
+.idea/
+*.iml
+*.iws
+*.ipr
+.DS_Store
+Thumbs.db
+.env
+!.env.example
+
+# ==================== Java / Maven ====================
+rag-wiki-java/target/
+rag-wiki-java/**/target/
+*.flattened-pom.xml
+
+# ==================== Python ====================
+rag-wiki-python/__pycache__/
+rag-wiki-python/**/__pycache__/
+rag-wiki-python/*.egg-info/
+rag-wiki-python/.eggs/
+rag-wiki-python/dist/
+rag-wiki-python/build/
+rag-wiki-python/.venv/
+rag-wiki-python/venv/
+rag-wiki-python/.pytest_cache/
+rag-wiki-python/.mypy_cache/
+
+# ==================== Frontend (Node) ====================
+rag-wiki-frontend/node_modules/
+rag-wiki-frontend/dist/
+rag-wiki-frontend/.nuxt/
+rag-wiki-frontend/.output/
+rag-wiki-frontend/.cache/
+
+# ==================== IDE ====================
+.vscode/settings.json
+.vscode/launch.json
+*.swp
+*.swo
+*~
+
+# ==================== Deploy / Secrets ====================
+rag-wiki-deploy/secrets/
+*.key
+*.pem
+*.p12
+*.jks
+
+# ==================== OS ====================
+.DS_Store
+.Spotlight-V100
+.Trashes
+ehthumbs.db

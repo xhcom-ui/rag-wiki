@@ -1,0 +1,190 @@
+# ============================================================
+# GitLab CI/CD 流水线配置
+# ============================================================
+# 包含阶段：代码检查 → 构建 → 测试 → 打包 → 部署
+# 支持 GitLab CI 和 ArgoCD
+
+stages:
+  - lint
+  - build
+  - test
+  - package
+  - deploy
+
+variables:
+  MAVEN_OPTS: "-Dmaven.repo.local=.m2/repository"
+  DOCKER_REGISTRY: "registry.example.com"
+  IMAGE_PREFIX: "rag-wiki"
+
+# ==================== 代码检查 ====================
+lint-java:
+  stage: lint
+  image: maven:3.9-eclipse-temurin-17
+  script:
+    - cd rag-wiki-java
+    - mvn checkstyle:check -B
+  only:
+    - merge_requests
+    - main
+
+lint-python:
+  stage: lint
+  image: python:3.11
+  script:
+    - cd rag-wiki-python
+    - pip install ruff mypy
+    - ruff check app/
+    - mypy app/ --ignore-missing-imports
+  only:
+    - merge_requests
+    - main
+
+lint-frontend:
+  stage: lint
+  image: node:20-alpine
+  script:
+    - cd rag-wiki-frontend
+    - npm install
+    - npm run lint
+  only:
+    - merge_requests
+    - main
+
+# ==================== 构建 ====================
+build-java:
+  stage: build
+  image: maven:3.9-eclipse-temurin-17
+  script:
+    - cd rag-wiki-java
+    - mvn package -DskipTests -B
+  artifacts:
+    paths:
+      - rag-wiki-java/*/target/*.jar
+    expire_in: 1 day
+  only:
+    - main
+    - tags
+
+build-frontend:
+  stage: build
+  image: node:20-alpine
+  script:
+    - cd rag-wiki-frontend
+    - npm install
+    - npm run build
+  artifacts:
+    paths:
+      - rag-wiki-frontend/dist/
+    expire_in: 1 day
+  only:
+    - main
+    - tags
+
+# ==================== 测试 ====================
+test-java:
+  stage: test
+  image: maven:3.9-eclipse-temurin-17
+  services:
+    - mysql:8.0
+    - redis:7
+  variables:
+    MYSQL_ROOT_PASSWORD: test
+    MYSQL_DATABASE: rag_wiki_test
+  script:
+    - cd rag-wiki-java
+    - mvn test -B
+  only:
+    - main
+    - merge_requests
+
+test-python:
+  stage: test
+  image: python:3.11
+  script:
+    - cd rag-wiki-python
+    - pip install -r requirements.txt
+    - pip install pytest pytest-asyncio
+    - pytest tests/ -v
+  only:
+    - main
+    - merge_requests
+
+# ==================== 打包(构建Docker镜像) ====================
+package-auth:
+  stage: package
+  image: docker:24
+  services:
+    - docker:24-dind
+  script:
+    - docker build -t $DOCKER_REGISTRY/$IMAGE_PREFIX/auth:$CI_COMMIT_SHORT_SHA -f rag-wiki-java/rag-wiki-auth/Dockerfile rag-wiki-java/
+    - docker push $DOCKER_REGISTRY/$IMAGE_PREFIX/auth:$CI_COMMIT_SHORT_SHA
+  only:
+    - main
+    - tags
+
+package-document:
+  stage: package
+  image: docker:24
+  services:
+    - docker:24-dind
+  script:
+    - docker build -t $DOCKER_REGISTRY/$IMAGE_PREFIX/document:$CI_COMMIT_SHORT_SHA -f rag-wiki-java/rag-wiki-document/Dockerfile rag-wiki-java/
+    - docker push $DOCKER_REGISTRY/$IMAGE_PREFIX/document:$CI_COMMIT_SHORT_SHA
+  only:
+    - main
+    - tags
+
+package-python:
+  stage: package
+  image: docker:24
+  services:
+    - docker:24-dind
+  script:
+    - docker build -t $DOCKER_REGISTRY/$IMAGE_PREFIX/python-ai:$CI_COMMIT_SHORT_SHA -f rag-wiki-python/Dockerfile rag-wiki-python/
+    - docker push $DOCKER_REGISTRY/$IMAGE_PREFIX/python-ai:$CI_COMMIT_SHORT_SHA
+  only:
+    - main
+    - tags
+
+package-frontend:
+  stage: package
+  image: docker:24
+  services:
+    - docker:24-dind
+  script:
+    - docker build -t $DOCKER_REGISTRY/$IMAGE_PREFIX/frontend:$CI_COMMIT_SHORT_SHA -f rag-wiki-frontend/Dockerfile rag-wiki-frontend/
+    - docker push $DOCKER_REGISTRY/$IMAGE_PREFIX/frontend:$CI_COMMIT_SHORT_SHA
+  only:
+    - main
+    - tags
+
+# ==================== 部署 ====================
+deploy-staging:
+  stage: deploy
+  image: bitnami/kubectl
+  script:
+    - kubectl config use-context staging
+    - kubectl set image deployment/rag-wiki-auth auth=$DOCKER_REGISTRY/$IMAGE_PREFIX/auth:$CI_COMMIT_SHORT_SHA -n rag-wiki
+    - kubectl set image deployment/rag-wiki-document document=$DOCKER_REGISTRY/$IMAGE_PREFIX/document:$CI_COMMIT_SHORT_SHA -n rag-wiki
+    - kubectl set image deployment/rag-wiki-python-ai python-ai=$DOCKER_REGISTRY/$IMAGE_PREFIX/python-ai:$CI_COMMIT_SHORT_SHA -n rag-wiki
+    - kubectl set image deployment/rag-wiki-frontend frontend=$DOCKER_REGISTRY/$IMAGE_PREFIX/frontend:$CI_COMMIT_SHORT_SHA -n rag-wiki
+    - kubectl rollout status deployment/rag-wiki-auth -n rag-wiki --timeout=120s
+  environment:
+    name: staging
+  only:
+    - main
+
+deploy-production:
+  stage: deploy
+  image: bitnami/kubectl
+  script:
+    - kubectl config use-context production
+    - kubectl set image deployment/rag-wiki-auth auth=$DOCKER_REGISTRY/$IMAGE_PREFIX/auth:$CI_COMMIT_TAG -n rag-wiki
+    - kubectl set image deployment/rag-wiki-document document=$DOCKER_REGISTRY/$IMAGE_PREFIX/document:$CI_COMMIT_TAG -n rag-wiki
+    - kubectl set image deployment/rag-wiki-python-ai python-ai=$DOCKER_REGISTRY/$IMAGE_PREFIX/python-ai:$CI_COMMIT_TAG -n rag-wiki
+    - kubectl set image deployment/rag-wiki-frontend frontend=$DOCKER_REGISTRY/$IMAGE_PREFIX/frontend:$CI_COMMIT_TAG -n rag-wiki
+  environment:
+    name: production
+  when: manual
+  only:
+    - tags
